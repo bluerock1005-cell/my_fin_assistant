@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+
+# Project
+run.log
+*.xlsx
+*.xls
+!_home_ebank_file_corporbank_download_20260708_1000700589143535149662.xls
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Workspace tools
+.workbuddy/
+
+# Test artifacts
+.pytest_cache/
