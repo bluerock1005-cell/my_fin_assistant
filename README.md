@@ -4,6 +4,10 @@
 
 ## ✨ 功能特性
 
+| 功能 | 说明 |
+|---|---|
+| **银行承兑汇票分类** | 加载 Excel，按白名单银行规则自动分类/标记，导出分类结果 |
+| **江苏银行对账单复制** | 加载对账单 Excel，表格查看/排序，支持拖拽导入、框选复制到剪贴板（可直接粘贴到 Excel） |
 
 ## 📁 目录结构
 
@@ -18,16 +22,19 @@ my_fin_assistant/
 │   ├── utils.py                # 消息框封装
 │   └── worker.py               # 后台线程任务封装
 ├── data/                       # 本地数据 / 缓存
-│   ├── banks.txt               # 银行白名单样本数据
-│   └── 银行承兑汇票分类_样例.xlsx
+│   └── banks.txt               # 银行白名单样本数据
+├── tests/                      # 测试文件
+│   ├── test_clipboard.py
+│   ├── test_direct_thread.py
+│   └── test_run_generate.py
 └── features/                   # 功能模块（UI 与逻辑分离）
-    # 首页模块已移除；功能由侧栏直接导航到各模块
-    └── bank_classify/
-        ├── ui.py               # 界面（BankClassifyFeature + BankClassifyWidget）
-        └── classify_logic.py   # 纯业务逻辑（白名单匹配 / 加载 / 写出 Excel，不依赖 UI）
+    ├── bank_classify/          # 银行承兑汇票分类
+    │   ├── ui.py               # 界面（BankClassifyFeature + BankClassifyWidget）
+    │   └── classify_logic.py   # 纯业务逻辑（白名单匹配 / 加载 / 写出 Excel）
+    └── js_bank_statement/      # 江苏银行对账单复制
+        ├── ui.py               # 界面（JsBankStmtFeature + JsBankStmtWidget）
+        └── logic.py            # 纯业务逻辑（Excel 读取，保留日期/数字原始类型）
 ```
-
-> `features/invoice/` 预留目录，待实现。
 
 ## 🔧 环境要求
 
@@ -40,7 +47,7 @@ my_fin_assistant/
 
 ```bash
 # 1. 进入项目目录
-cd C:\Users\chong elaine\Desktop\ai-coding-test\my_fin_assistant
+cd "C:\Users\chong elaine\Desktop\ai-coding-test\my_fin_assistant"
 
 # 2. 启动客户端（推荐，直接走 venv 的 python）
 .\.venv\Scripts\python.exe main.py
@@ -86,4 +93,4 @@ except Exception as e:
 ## 📝 备注
 
 - 本项目由 `21票据` 独立脚本项目（tkinter + openpyxl）按分层架构迁入并重写成 PySide6 桌面客户端。
-- 顶部 `银行承兑汇票分类.xlsx` 与 `features/bank_classify/银行承兑汇票分类.xlsx` 为运行输出样例，可删除。
+- 首页模块（home）已移除，功能通过侧边栏直接导航到各模块。

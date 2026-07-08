@@ -33,12 +33,15 @@ my_fin_assistant/
 │   ├── theme.py                # Fluent 设计系统（COLOR/SPACING/... + apply_theme + nav_icon）
 │   ├── utils.py                # info/warn/error/confirm 消息框封装
 │   └── worker.py               # run_in_thread / run_blocking 后台任务
-├── data/                       # 本地数据（banks.txt + 输出样例）
+├── data/                       # 本地数据（banks.txt）
 └── features/
     # 首页模块已移除；功能由侧栏直接导航到各模块
-    └── bank_classify/
-        ├── ui.py               # 界面（BankClassifyFeature + BankClassifyWidget）
-        └── classify_logic.py   # 纯业务逻辑（白名单匹配/加载/写出 Excel）
+    ├── bank_classify/
+    │   ├── ui.py               # 界面（BankClassifyFeature + BankClassifyWidget）
+    │   └── classify_logic.py   # 纯业务逻辑（白名单匹配/加载/写出 Excel）
+    └── js_bank_statement/
+        ├── ui.py               # 界面（JsBankStmtFeature + JsBankStmtWidget）
+        └── logic.py            # 纯业务逻辑（Excel 读取，保留日期/数字原始类型）
 ```
 
 ## 核心 API 速查
@@ -107,6 +110,6 @@ QT_QPA_PLATFORM=offscreen .\.venv\Scripts\python.exe -c "import main; print([f.n
 
 ## 当前状态
 
-- 已实现：`home`（首页）、`bank_classify`（银行承兑汇票白名单分类）
+- 已实现：`bank_classify`（银行承兑汇票白名单分类）、`js_bank_statement`（江苏银行对账单复制）
 - 预留未实现：`features/invoice/`（发票模块，按 `bank_classify` 写法套用即可）
-- 输出样例 `银行承兑汇票分类.xlsx`（根目录与 `features/bank_classify/` 各一份）可删除，非源码
+- 首页模块（home）已移除，功能通过侧边栏直接导航到各模块
