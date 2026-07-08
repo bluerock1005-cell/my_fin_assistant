@@ -34,6 +34,7 @@ my_fin_assistant/
 │   ├── utils.py                # info/warn/error/confirm 消息框封装
 │   └── worker.py               # run_in_thread / run_blocking 后台任务
 ├── data/                       # 本地数据（banks.txt）
+├── tests/                      # 测试文件（无头烟测 / 剪贴板）
 └── features/
     # 首页模块已移除；功能由侧栏直接导航到各模块
     ├── bank_classify/
@@ -69,9 +70,12 @@ my_fin_assistant/
 **DO**
 - 功能模块用相对导入：`from . import classify_logic as logic`
 - 跨级导入：`from core import app_config, theme`
+- 功能模块的 `icon` 前缀固定用 `fa5s.`（Solid 风格），如 `fa5s.file-excel`、`fa5s.chart-pie`
 - 长任务（读写大文件、生成 Excel）走 `run_in_thread`，开始时禁用主操作按钮、结束/失败恢复并给出摘要
-- 每页布局遵循「页头(title+desc) / 输入卡片 / 操作 / 日志面板」工作流
+- 每页布局遵循「页头(title+desc) / 输入卡片 / 操作」工作流
 - 处理空态 / 加载态 / 错误态 / 成功态
+- Ctrl+C 等快捷键行为由自定义 `QTableView` 子类 `_TableView` 重写 `keyPressEvent` 实现，避免默认单格复制的限制
+- 复制/排序场景中，原始值存 `QStandardItem.UserRole`，不从 `QModelIndex.row()` 反查原始数组，防止排序后错位
 
 **DON'T**
 - ❌ 在 `core/main_window.py` 写任何业务逻辑
@@ -93,7 +97,8 @@ my_fin_assistant/
    except Exception as e:
        print(f"[warn] 跳过 features.<模块>: {e}", file=sys.stderr)
    ```
-4. 如需首页入口卡片，在 `features/home/feature.py` 的 `FEATURES` 列表加一项（`key` 与 `FeatureModule.name` 对应），并让卡片点击 `emit feature_requested`。
+4. 模块即插即用：在 `main.py` 注册表追加后侧边栏自动出现，无需改主窗口代码。
+   > 首页卡片入口（`features/home/feature.py`）已移除，加新功能直接走侧边栏导航。
 
 ## 运行与测试
 
