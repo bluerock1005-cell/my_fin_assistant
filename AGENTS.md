@@ -40,9 +40,13 @@ my_fin_assistant/
     ├── bank_classify/
     │   ├── ui.py               # 界面（BankClassifyFeature + BankClassifyWidget）
     │   └── classify_logic.py   # 纯业务逻辑（白名单匹配/加载/写出 Excel）
-    └── js_bank_statement/
-        ├── ui.py               # 界面（JsBankStmtFeature + JsBankStmtWidget）
-        └── logic.py            # 纯业务逻辑（Excel 读取，保留日期/数字原始类型）
+    ├── js_bank_statement/
+    │   ├── ui.py               # 界面（JsBankStmtFeature + JsBankStmtWidget）
+    │   └── logic.py            # 纯业务逻辑（Excel 读取，保留日期/数字原始类型）
+    └── notes_receivable_import/
+        ├── ui.py               # 界面（NotesReceivableImportFeature + NotesReceivableImportWidget）
+        │                       #   + MappingDialog（映射配置对话框，下拉+冲突提示+持久化）
+        └── import_logic.py     # 纯业务逻辑（多来源读取/列名匹配/清洗/写入模板）
 ```
 
 ## 核心 API 速查
@@ -100,6 +104,42 @@ my_fin_assistant/
 4. 模块即插即用：在 `main.py` 注册表追加后侧边栏自动出现，无需改主窗口代码。
    > 首页卡片入口（`features/home/feature.py`）已移除，加新功能直接走侧边栏导航。
 
+## 功能模块说明
+
+### `features/notes_receivable_import/`（应收票据批量导入）
+
+**主流程**：拖拽来源 Excel → 自动列名匹配（关键字规则）→「配置映射」(可选) → 表格展示 → 手动编辑 → 导出模板。
+
+**接口契约**（`import_logic.py`，纯 Python、零 UI 依赖）：
+- `TEMPLATE_FIELDS` — 模板字段定义列表（`TemplateField`：`header` / `required` / `aliases`），从模板表头（`TEMPLATE_HEADERS`）解析而来。
+- `FIXED_FIELDS` — 固定字段注册表，**不出现在映射对话框**，始终按规则自动填充：
+  | 字段 | 规则 |
+  |------|------|
+  | `*导入序号` | 自动顺序编号 (1, 2, 3…) |
+  | `*票据类型` | 固定常量「银行承兑汇票」 |
+  | `*币别` | 固定常量「人民币」 |
+  | `*背书明细/导入序号` | 留空 |
+  | `*汇率` | 固定常量 `1.0` |
+  | `*付款单位多资料值` | 固定常量「客户」 |
+  > 固定字段优先级最高：即便来源文件有同名列（如「币别=美元」「汇率=7.2」），也会被覆盖。
+- `match_columns(source_headers, manual_map=None, excluded_targets=None)` → `(matched, unmatched_source, missing_required)`
+  - **自动匹配仅针对必录字段**；非必录字段只有显式写入 `manual_map` 才会匹配，否则默认留空（避免「打开对话框点确定反而清空可选字段」）。
+  - 跳过 `FIXED_FIELDS` 与 `excluded_targets`。
+  - `missing_required` 已排除固定字段。
+- `read_and_transform(file_paths, defaults=None, manual_maps=None, excluded_maps=None)` → `ImportResult`
+  - `manual_maps`: `{文件名: {来源列: 模板字段}}`（用户显式映射/覆盖）。
+  - `excluded_maps`: `{文件名: [模板字段…]}`（用户显式「不匹配」的字段，不参与自动匹配）。
+  - `FileResult.source_headers` 供对话框下拉使用。
+- `process_files(file_paths, output_path, template_path=None, data_dir=None, manual_maps=None, defaults=None, excluded_maps=None)` → 完整流程并写盘。
+
+**UI 约定**（`ui.py`）：
+- `NotesReceivableImportWidget` 继承 `FeatureModule` + `QWidget`；`_do_import` 由持久化映射 `self._manual_full` 推导 `positive`/`excluded` 传入 `read_and_transform`。
+- `MappingDialog(QDialog)`：左列模板字段（必录 `*` 标红）、右列来源列下拉（来源实际列名 + 哨兵 `〈不匹配/固定值〉`）；默认值 = 自动匹配结果；**必录行排在最前、非必录在后**；多文件顶部下拉切换；实时冲突检测（重复来源列红框 + 必录未匹配橙框 + 底部警告条）；含「恢复自动匹配 / 确定 / 取消」。
+- **映射持久化**：确认后写入 `data/mapping_overrides.json`（`{文件名: {模板字段: 来源列 或 null}}`）；启动时 `NotesReceivableImportWidget.__init__` 自动召回，日志透明提示「已载入已保存映射」。
+- 固定字段全程从对话框行、`_editing`、`result_maps`、`_load_overrides` 中剔除，也不会出现在默认值卡片。
+
+**测试**：`tests/test_notes_mapping.py`（offscreen 无头）覆盖手工覆盖+显式不匹配、对话框冲突/必录提示/恢复自动/结果结构、持久化回载。
+
 ## 运行与测试
 
 ```bash
@@ -115,6 +155,6 @@ QT_QPA_PLATFORM=offscreen .\.venv\Scripts\python.exe -c "import main; print([f.n
 
 ## 当前状态
 
-- 已实现：`bank_classify`（银行承兑汇票白名单分类）、`js_bank_statement`（江苏银行对账单复制）
+- 已实现：`bank_classify`（银行承兑汇票白名单分类）、`js_bank_statement`（江苏银行对账单复制）、`notes_receivable_import`（应收票据批量导入，含「配置映射」对话框 + 固定字段自动填充 + 映射持久化）
 - 预留未实现：`features/invoice/`（发票模块，按 `bank_classify` 写法套用即可）
 - 首页模块（home）已移除，功能通过侧边栏直接导航到各模块

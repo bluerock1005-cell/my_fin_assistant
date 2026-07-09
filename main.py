@@ -44,6 +44,12 @@ except Exception as e:  # noqa: BLE001
 # except Exception as e:
 #     print(f"[warn] 跳过 features.invoice: {e}", file=sys.stderr)
 
+try:
+    from features.notes_receivable_import.ui import NotesReceivableImportFeature
+    FEATURES.append(NotesReceivableImportFeature())
+except Exception as e:  # noqa: BLE001
+    print(f"[warn] 跳过 features.notes_receivable_import: {e}", file=sys.stderr)
+
 
 def main() -> int:
     app_config.ensure_dirs()
