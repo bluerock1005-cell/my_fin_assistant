@@ -8,6 +8,33 @@
 from __future__ import annotations
 
 import sys
+import traceback
+from datetime import datetime
+from pathlib import Path
+
+
+def _install_crash_logger() -> None:
+    """窗口化程序无控制台，未捕获异常会静默丢失。
+
+    把异常堆栈写到 exe 同目录的 crash.log，便于发给他人使用时排查问题。
+    """
+    if getattr(sys, "frozen", False):
+        base = Path(sys.executable).resolve().parent
+    else:
+        base = Path(__file__).resolve().parent
+    log_path = base / "crash.log"
+
+    def _hook(exc_type, exc, tb) -> None:
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write("\n=== crash %s ===\n" % datetime.now().isoformat())
+                f.write("".join(traceback.format_exception(exc_type, exc, tb)))
+        except Exception:
+            pass
+        sys.__excepthook__(exc_type, exc, tb)
+
+    sys.excepthook = _hook
+
 
 from PySide6.QtWidgets import QApplication
 
@@ -52,6 +79,7 @@ except Exception as e:  # noqa: BLE001
 
 
 def main() -> int:
+    _install_crash_logger()
     app_config.ensure_dirs()
 
     app = QApplication(sys.argv)

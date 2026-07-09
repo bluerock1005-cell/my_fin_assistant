@@ -7,10 +7,37 @@
 """
 from __future__ import annotations
 
+import shutil
+import sys
 from pathlib import Path
 
-# 项目根目录：core/app_config.py 的上上级即项目根
-BASE_DIR: Path = Path(__file__).resolve().parent.parent
+
+def _is_frozen() -> bool:
+    """是否由 PyInstaller 打包运行（sys.frozen）。"""
+    return bool(getattr(sys, "frozen", False))
+
+
+FROZEN: bool = _is_frozen()
+
+
+def _resolve_base_dir() -> Path:
+    """确定应用根目录（data/ 等所在位置）。
+
+    - 源码运行：项目根 = core/app_config.py 的上上级。
+    - PyInstaller 打包后（sys.frozen）：exe 所在目录，使 data/ 与 exe 平级、
+      可读写、用户可见（便于替换模板、备份 output 与映射配置）。
+    """
+    if FROZEN:
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+# 项目根目录（源码运行）或 exe 所在目录（打包后）
+BASE_DIR: Path = _resolve_base_dir()
+
+# 打包时 PyInstaller 会把 datas 解压到 sys._MEIPASS；onedir 下与 exe 同目录。
+# 内置只读资源（模板 / banks.txt）优先从此处取，缺失时再拷到可写的 DATA_DIR。
+RESOURCE_DIR: Path = Path(getattr(sys, "_MEIPASS", str(BASE_DIR)))
 
 # 本地数据 / 缓存目录（与 features/ core/ 平级）
 DATA_DIR: Path = BASE_DIR / "data"
@@ -33,6 +60,35 @@ DEFAULT_OUTPUT_DIR: Path = DATA_DIR / "output"
 
 
 def ensure_dirs() -> None:
-    """启动时调用，保证关键目录存在。"""
+    """启动时调用，保证关键目录存在。
+
+    打包后（FROZEN）额外把内置只读资源（模板 / banks.txt）从解压目录
+    (_MEIPASS) 复制到可写的 DATA_DIR，保证首次运行即可用、且用户可替换。
+    """
     for d in (DATA_DIR, DEFAULT_OUTPUT_DIR, RESOURCES_DIR, ICONS_DIR):
         d.mkdir(parents=True, exist_ok=True)
+    if FROZEN:
+        _copy_bundled_assets()
+
+
+# 需要随包分发、并在运行时落到 DATA_DIR 的内置文件
+_BUNDLED_ASSETS: tuple[str, ...] = (
+    "应收票据导入模版.xlsx",
+    "banks.txt",
+)
+
+
+def _copy_bundled_assets() -> None:
+    """把打包资源中的只读文件复制到可写 data/（仅在目标缺失时复制）。"""
+    src_data = RESOURCE_DIR / "data"
+    if not src_data.is_dir():
+        return
+    for name in _BUNDLED_ASSETS:
+        s = src_data / name
+        d = DATA_DIR / name
+        if s.is_file() and not d.exists():
+            try:
+                shutil.copy2(s, d)
+            except OSError:
+                # 复制失败不阻断启动（仅功能缺失，后续会报错提示）
+                pass
