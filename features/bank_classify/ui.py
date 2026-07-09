@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 import concurrent.futures
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QDragEnterEvent, QDropEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -21,9 +21,12 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -34,6 +37,79 @@ from core.worker import run_in_thread
 
 # 纯逻辑层：不导入任何 UI 依赖，可独立测试
 from . import classify_logic as _logic
+
+
+class FlowLayout(QLayout):
+    """轻量流式布局：子项从左到右排，到边界自动换行（用于白名单标签云）。
+
+    仅依赖 Qt 标准 API，无需额外组件；作为某个 QWidget 的顶层布局时
+    会正确参与 heightForWidth，配合 QScrollArea 工作良好。
+    """
+
+    def __init__(self, parent: QWidget | None = None, hspacing: int = 8, vspacing: int = 8) -> None:
+        super().__init__(parent)
+        self._hspacing = hspacing
+        self._vspacing = vspacing
+        self._items: list = []
+        self.setContentsMargins(0, 0, 0, 0)
+
+    def addItem(self, item) -> None:  # noqa: N802
+        self._items.append(item)
+
+    def count(self) -> int:  # noqa: N802
+        return len(self._items)
+
+    def itemAt(self, index: int):  # noqa: N802
+        if 0 <= index < len(self._items):
+            return self._items[index]
+        return None
+
+    def takeAt(self, index: int):  # noqa: N802
+        if 0 <= index < len(self._items):
+            return self._items.pop(index)
+        return None
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802
+        return True
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802
+        return self._do_layout(QRect(0, 0, width, 0), True)
+
+    def setGeometry(self, rect: QRect) -> None:  # noqa: N802
+        super().setGeometry(rect)
+        self._do_layout(rect, False)
+
+    def sizeHint(self):  # noqa: N802
+        return self.minimumSize()
+
+    def minimumSize(self):  # noqa: N802
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        left, top, right, bottom = self.getContentsMargins()
+        size += QSize(left + right, top + bottom)
+        return size
+
+    def _do_layout(self, rect: QRect, test_only: bool) -> int:
+        left, top, right, bottom = self.getContentsMargins()
+        effective = rect.adjusted(+left, +top, -right, -bottom)
+        x = effective.x()
+        y = effective.y()
+        line_height = 0
+        for item in self._items:
+            w = item.sizeHint().width()
+            h = item.sizeHint().height()
+            next_x = x + w + self._hspacing
+            if next_x - self._hspacing > effective.right() and line_height > 0:
+                x = effective.x()
+                y = y + line_height + self._vspacing
+                next_x = x + w + self._hspacing
+                line_height = 0
+            if not test_only:
+                item.setGeometry(QRect(QPoint(x, y), QSize(w, h)))
+            x = next_x
+            line_height = max(line_height, h)
+        return y + line_height - rect.y() + bottom
 
 
 class BankClassifyWidget(QWidget):
@@ -53,7 +129,19 @@ class BankClassifyWidget(QWidget):
     # ----- 布局 -----------------------------------------------------------
 
     def _setup_ui(self) -> None:
-        root = QVBoxLayout(self)
+        # 外层滚动容器：下方白名单卡片会增加高度，包一层滚动避免小窗口被裁剪
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea(self)
+        scroll.setObjectName("pageScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        content = QWidget(scroll)
+        content.setObjectName("page")
+        self._content = content
+        root = QVBoxLayout(content)
         root.setContentsMargins(theme.SPACING[24], theme.SPACING[24], theme.SPACING[24], theme.SPACING[24])
         root.setSpacing(theme.SPACING[16])
 
@@ -70,6 +158,9 @@ class BankClassifyWidget(QWidget):
         root.addWidget(title)
         root.addWidget(desc)
         root.addSpacing(theme.SPACING[4])
+
+        # 21家银行白名单（可折叠展示）
+        root.addWidget(self._build_whitelist_card())
 
         # 输入卡片
         input_card = QFrame(self)
@@ -150,6 +241,86 @@ class BankClassifyWidget(QWidget):
         self._log.setMinimumHeight(120)
         lc_lay.addWidget(self._log)
         root.addWidget(log_card, stretch=1)
+
+        # 滚动容器收尾
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+
+    # ----- 21家银行白名单展示 -------------------------------------------
+
+    def _make_chip(self, text: str, parent: QWidget) -> QLabel:
+        """生成单个银行标签（Fluent 风格胶囊）。"""
+        chip = QLabel(text, parent)
+        chip.setObjectName("wlChip")
+        chip.setAlignment(Qt.AlignCenter)
+        chip.setStyleSheet(
+            "QLabel#wlChip{"
+            f"background-color:{theme.COLOR['primary_soft']};"
+            f"color:{theme.COLOR['primary']};"
+            f"border:1px solid {theme.COLOR['border']};"
+            f"border-radius:{theme.RADIUS['control']}px;"
+            f"padding:4px 12px;"
+            f"font-size:{theme.TYPE['body']}px;"
+            "}"
+        )
+        chip.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        return chip
+
+    def _build_whitelist_card(self) -> QFrame:
+        """构建「21家银行白名单」卡片（可折叠）。"""
+        card = QFrame(self)
+        card.setObjectName("card")
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(theme.SPACING[16], theme.SPACING[12], theme.SPACING[16], theme.SPACING[12])
+        lay.setSpacing(theme.SPACING[8])
+
+        # 可点击表头（标题 + 数量 + 箭头）
+        header_row = QHBoxLayout()
+        header = QLabel("21家银行白名单", card)
+        header.setObjectName("cardTitle")
+        header.setCursor(Qt.PointingHandCursor)
+        count = QLabel(f"（共 {len(_logic.get_whitelist_banks())} 家）", card)
+        count.setObjectName("pageDesc")
+        self._wl_chevron = QLabel("▾", card)  # ▾
+        self._wl_chevron.setObjectName("pageDesc")
+        header_row.addWidget(header)
+        header_row.addWidget(count)
+        header_row.addStretch(1)
+        header_row.addWidget(self._wl_chevron)
+        lay.addLayout(header_row)
+
+        # 折叠主体：按类型分组 + 流式标签
+        body = QWidget(card)
+        body_lay = QVBoxLayout(body)
+        body_lay.setContentsMargins(0, theme.SPACING[4], 0, 0)
+        body_lay.setSpacing(theme.SPACING[8])
+        for cat, banks in _logic.get_whitelist_groups():
+            cat_label = QLabel(cat, body)
+            cat_label.setStyleSheet(
+                "background:transparent;"
+                f"color:{theme.COLOR['muted']};"
+                f"font-weight:600;"
+                f"font-size:{theme.TYPE['helper']}px;"
+            )
+            body_lay.addWidget(cat_label)
+            row = QWidget(body)
+            flow = FlowLayout(row, hspacing=theme.SPACING[8], vspacing=theme.SPACING[8])
+            for b in banks:
+                flow.addWidget(self._make_chip(b, row))
+            body_lay.addWidget(row)
+        lay.addWidget(body)
+
+        self._wl_body = body
+        self._wl_collapsed = False
+
+        def _toggle(_event=None) -> None:
+            self._wl_collapsed = not self._wl_collapsed
+            body.setVisible(not self._wl_collapsed)
+            self._wl_chevron.setText("▸" if self._wl_collapsed else "▾")  # ▸ / ▾
+
+        header.mousePressEvent = lambda e: _toggle()
+        self._wl_chevron.mousePressEvent = lambda e: _toggle()
+        return card
 
     # ----- 拖拽支持 -------------------------------------------------------
 

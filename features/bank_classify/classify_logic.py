@@ -57,6 +57,52 @@ WHITELIST = sorted(
     reverse=True,
 )
 
+# ---------------------------------------------------------------------------
+# 21家银行白名单展示（用于客户端 UI 展示，按类型分组）
+# 与上方 WHITELIST 同源：展示列表的去重简称必须等于 WHITELIST 实际命中的简称集合，
+# 二者由 validate_whitelist() 校验一致性，避免两处不同步。
+# ---------------------------------------------------------------------------
+WHITELIST_GROUPS = [
+    ("国有大型商业银行", [
+        "工商银行", "农业银行", "中国银行", "建设银行", "交通银行", "邮储银行",
+    ]),
+    ("股份制商业银行", [
+        "中信银行", "光大银行", "华夏银行", "民生银行", "招商银行",
+        "兴业银行", "平安银行", "浦发银行", "广发银行", "浙商银行",
+    ]),
+    ("城市商业银行", [
+        "北京银行", "南京银行", "宁波银行", "江苏银行", "上海银行",
+    ]),
+]
+
+
+def get_whitelist_groups() -> list[tuple[str, list[str]]]:
+    """返回 [(类型, [银行简称...]), ...]，供 UI 分组展示。"""
+    return WHITELIST_GROUPS
+
+
+def get_whitelist_banks() -> list[str]:
+    """返回扁平化的 21 家银行简称列表（保持展示顺序）。"""
+    return [bank for _, banks in WHITELIST_GROUPS for bank in banks]
+
+
+def validate_whitelist() -> bool:
+    """校验展示列表与 WHITELIST 实际命中的银行一致。
+
+    若有人改动 WHITELIST 的模式/简称却忘了同步 WHITELIST_GROUPS，
+    会抛出 AssertionError，便于在测试/启动时发现问题。
+    """
+    display = set(get_whitelist_banks())
+    actual = {short for _, short in WHITELIST}
+    if display != actual:
+        missing = sorted(actual - display)
+        extra = sorted(display - actual)
+        raise AssertionError(
+            f"白名单展示列表与 WHITELIST 不一致：缺失={missing} 多余={extra}"
+        )
+    return True
+
+
 FONT_NAME = "微软雅黑"
 
 # 仅在未提供输入文件时使用的示例数据
