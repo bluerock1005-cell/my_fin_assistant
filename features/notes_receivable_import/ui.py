@@ -51,6 +51,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSplitter,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -102,7 +103,7 @@ class MappingDialog(QDialog):
                  template_fields: list) -> None:
         super().__init__(parent)
         self.setWindowTitle("字段映射配置")
-        self.setMinimumSize(600, 560)
+        self.setMinimumSize(640, 600)
 
         # files_info: list of dict(name, source_headers, auto_map, current_map)
         self._files_info = files_info
@@ -171,8 +172,9 @@ class MappingDialog(QDialog):
             fsel.addWidget(self._file_combo, stretch=1)
             root.addLayout(fsel)
 
-        # 表头行
+        # 表头行（与下方网格列对齐）
         head = QHBoxLayout()
+        head.setContentsMargins(4, 0, 4, 0)
         hl = QLabel("导出列（模板字段）", self)
         hl.setObjectName("cardTitle")
         hr = QLabel("来源列（下拉选择）", self)
@@ -181,14 +183,21 @@ class MappingDialog(QDialog):
         head.addWidget(hr, stretch=1)
         root.addLayout(head)
 
-        # 滚动区
+        divider = QFrame(self)
+        divider.setFrameShape(QFrame.Shape.HLine)
+        divider.setFrameShadow(QFrame.Shadow.Plain)
+        divider.setObjectName("cardDivider")
+        root.addWidget(divider)
+
+        # 滚动区：内容外框加轻量卡片样式，避免行内容与背景混在一起
         self._scroll = QScrollArea(self)
         self._scroll.setWidgetResizable(True)
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._content = QWidget(self)
         self._grid = QGridLayout(self._content)
-        self._grid.setContentsMargins(0, 0, 0, 0)
-        self._grid.setSpacing(8)
+        self._grid.setContentsMargins(4, 8, 4, 8)
+        self._grid.setHorizontalSpacing(16)
+        self._grid.setVerticalSpacing(10)
         self._grid.setColumnStretch(0, 1)
         self._grid.setColumnStretch(1, 1)
         self._scroll.setWidget(self._content)
@@ -482,33 +491,46 @@ class NotesReceivableImportWidget(QWidget):
         c1.setSpacing(theme.SPACING[12])
 
         h1 = QHBoxLayout()
+        h1.setSpacing(theme.SPACING[12])
         h1_lbl = QLabel("来源文件（拖拽 / 选择）", card1)
         h1_lbl.setObjectName("cardTitle")
         h1.addWidget(h1_lbl)
         h1.addStretch(1)
         btn_add = QPushButton("+ 添加文件", card1)
         btn_add.setFixedHeight(32)
+        btn_add.setMinimumWidth(100)
         btn_add.clicked.connect(self._add_files)
         h1.addWidget(btn_add)
         # 映射配置入口（导入后启用）
         self._btn_map = QPushButton("配置映射", card1)
         self._btn_map.setFixedHeight(32)
+        self._btn_map.setMinimumWidth(100)
         self._btn_map.setEnabled(False)
         self._btn_map.setToolTip("导入后可手工调整列名映射关系")
         self._btn_map.clicked.connect(self._open_mapping_dialog)
         h1.addWidget(self._btn_map)
         c1.addLayout(h1)
 
-        # 导入 / 导出 单独成一行
+        # 细分隔线，把「文件选择」与「主操作」区隔开
+        divider1 = QFrame(card1)
+        divider1.setFrameShape(QFrame.Shape.HLine)
+        divider1.setFrameShadow(QFrame.Shadow.Plain)
+        divider1.setObjectName("cardDivider")
+        c1.addWidget(divider1)
+
+        # 导入 / 导出：主操作行，等宽突出，右侧附带进度提示
         h2 = QHBoxLayout()
-        self._btn_import = QPushButton("导入", card1)
+        h2.setSpacing(theme.SPACING[12])
+        self._btn_import = QPushButton("导入 / 刷新", card1)
         self._btn_import.setObjectName("primary")
-        self._btn_import.setFixedHeight(32)
+        self._btn_import.setFixedHeight(34)
+        self._btn_import.setMinimumWidth(120)
         self._btn_import.clicked.connect(self._do_import)
         h2.addWidget(self._btn_import)
         self._btn_export = QPushButton("导出 Excel", card1)
         self._btn_export.setObjectName("primary")
-        self._btn_export.setFixedHeight(32)
+        self._btn_export.setFixedHeight(34)
+        self._btn_export.setMinimumWidth(120)
         self._btn_export.setEnabled(False)
         self._btn_export.clicked.connect(self._do_export)
         h2.addWidget(self._btn_export)
@@ -540,42 +562,45 @@ class NotesReceivableImportWidget(QWidget):
         dc_head.setObjectName("cardTitle")
         c2.addWidget(dc_head)
 
-        dr = QHBoxLayout()
-        dr.addWidget(QLabel(
-            "（币别 / 票据类型 / 汇率 / 导入序号 / 背书明细 由系统自动填充，无需配置）",
-            card2))
-        dr.addStretch(1)
+        # 用网格对齐「标签 + 输入框」，两行整齐排布，视觉上比多个 HBox 更规整
+        dg = QGridLayout()
+        dg.setHorizontalSpacing(theme.SPACING[12])
+        dg.setVerticalSpacing(theme.SPACING[12])
 
-        # 模板切换
-        dr.addWidget(QLabel("|  模板:", card2))
+        lbl_tpl = QLabel("模板:", card2)
+        lbl_tpl.setFixedWidth(70)
+        dg.addWidget(lbl_tpl, 0, 0)
         self._lbl_template = QLineEdit(card2)
         self._lbl_template.setReadOnly(True)
         self._lbl_template.setText(self._template_path.name)
-        self._lbl_template.setFixedWidth(160)
+        self._lbl_template.setFixedHeight(30)
         self._lbl_template.setToolTip(str(self._template_path))
-        dr.addWidget(self._lbl_template)
+        dg.addWidget(self._lbl_template, 0, 1)
         btn_switch_tpl = QPushButton("切换", card2)
         btn_switch_tpl.setFixedHeight(30)
+        btn_switch_tpl.setMinimumWidth(72)
         btn_switch_tpl.clicked.connect(self._switch_template)
-        dr.addWidget(btn_switch_tpl)
+        dg.addWidget(btn_switch_tpl, 0, 2)
 
-        c2.addLayout(dr)
-
-        # 第2行：收款组织 / 付款单位
-        dr2 = QHBoxLayout()
-        dr2.addWidget(QLabel("收款组织:", card2))
+        lbl_recv = QLabel("收款组织:", card2)
+        lbl_recv.setFixedWidth(70)
+        dg.addWidget(lbl_recv, 1, 0)
         self._edit_recv_org = QLineEdit("", card2)
-        self._edit_recv_org.setFixedWidth(180)
         self._edit_recv_org.setFixedHeight(30)
         self._edit_recv_org.setPlaceholderText("请填写本单位/我公司名称")
-        dr2.addWidget(self._edit_recv_org)
-        dr2.addWidget(QLabel("  付款单位:", card2))
-        self._edit_payer = QLineEdit("客户", card2)
-        self._edit_payer.setFixedWidth(180)
-        self._edit_payer.setFixedHeight(30)
-        dr2.addWidget(self._edit_payer)
-        dr2.addStretch(1)
-        c2.addLayout(dr2)
+        dg.addWidget(self._edit_recv_org, 1, 1)
+
+        dg.setColumnStretch(1, 1)
+        dg.setColumnMinimumWidth(2, 72)
+        c2.addLayout(dg)
+
+        note = QLabel(
+            "币别 / 票据类型 / 汇率 / 导入序号 / 背书明细 由系统自动填充，无需配置。",
+            card2)
+        note.setObjectName("pageDesc")
+        note.setWordWrap(True)
+        c2.addWidget(note)
+
         root.addWidget(card2)
 
         # === 卡片3：可编辑数据表格 ===
@@ -591,41 +616,47 @@ class NotesReceivableImportWidget(QWidget):
         t_lbl.setObjectName("cardTitle")
         t_head.addWidget(t_lbl)
         t_head.addStretch(1)
+        self._progress = QLabel("", card3)
+        self._progress.setObjectName("pageDesc")
+        t_head.addWidget(self._progress)
         self._lbl_row_count = QLabel("", card3)
         self._lbl_row_count.setObjectName("pageDesc")
         t_head.addWidget(self._lbl_row_count)
         c3.addLayout(t_head)
 
         self._table = _EditableTableView(card3)
-        self._table.setMinimumHeight(280)
+        self._table.setMinimumHeight(200)
         self._model = QStandardItemModel(self)
         self._table.setModel(self._model)
         c3.addWidget(self._table, stretch=1)
 
-        root.addWidget(card3, stretch=4)
-
-        # 进度
-        self._progress = QLabel("", self)
-        self._progress.setObjectName("pageDesc")
-        root.addWidget(self._progress)
-
-        # 日志面板（与表格区紧密）
+        # 日志面板
         log_card = QFrame(self)
         log_card.setObjectName("card")
         lc_lay = QVBoxLayout(log_card)
         lc_lay.setContentsMargins(theme.SPACING[12], theme.SPACING[12],
                                     theme.SPACING[12], theme.SPACING[12])
-        lc_lay.setSpacing(4)
+        lc_lay.setSpacing(6)
         log_title = QLabel("运行日志（列匹配详情）", log_card)
         log_title.setObjectName("cardTitle")
         lc_lay.addWidget(log_title)
         self._log = QPlainTextEdit(log_card)
         self._log.setObjectName("logView")
         self._log.setReadOnly(True)
-        self._log.setMinimumHeight(60)
-        self._log.setMaximumHeight(120)
-        lc_lay.addWidget(self._log)
-        root.addWidget(log_card)
+        self._log.setMinimumHeight(50)
+        lc_lay.addWidget(self._log, stretch=1)
+
+        # 表格区与日志区放入可拖动分栏：默认表格占多数空间，
+        # 用户可按需拖大日志区查看详细匹配信息，比固定高度更灵活。
+        splitter = QSplitter(Qt.Orientation.Vertical, self)
+        splitter.setObjectName("previewSplitter")
+        splitter.setChildrenCollapsible(False)
+        splitter.addWidget(card3)
+        splitter.addWidget(log_card)
+        splitter.setStretchFactor(0, 4)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([420, 120])
+        root.addWidget(splitter, stretch=1)
 
     # ====== 拖拽 ======
 
@@ -706,9 +737,11 @@ class NotesReceivableImportWidget(QWidget):
         # 注：*币别、*票据类型、*汇率、*导入序号、*背书明细/导入序号 为固定字段，
         # 由 import_logic.FIXED_FIELDS 统一填充（人民币 / 银行承兑汇票 /
         # 1 / 自动序号 / 留空），此处不再提供默认值入口。
+        # *付款单位 原在「默认值/模板」卡片有输入框，现按用户要求移除该行，
+        # 统一默认「客户」（来源文件匹配到「付款单位」列时仍以来源值为准）。
         return {
             "收款组织": self._edit_recv_org.text().strip() or None,
-            "*付款单位": self._edit_payer.text().strip() or "客户",
+            "*付款单位": "客户",
         }
 
     # ====== 导入（读取+匹配+清洗 → 展示到表格）======
