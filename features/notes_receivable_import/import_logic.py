@@ -59,6 +59,7 @@ _REQUIRED_FIELDS: dict[str, list[str]] = {
     "收款组织": ["收款组织", "收款方组织", "收款公司", "本公司",
                  "我方公司", "本单位"],
     "结算组织": ["结算组织", "结算方组织", "结算公司"],
+    "销售组织": ["销售组织", "销售部门组织", "sales_org"],
     "付款单位": ["付款单位", "付款人", "payer", "付款方"],
     "背书明细/导入序号": ["背书明细/导入序号", "背书序号", "endorse_seq"],
 }
@@ -71,7 +72,6 @@ _OPTIONAL_FIELDS: dict[str, list[str]] = {
     "带追索权": ["带追索权", "追索权", "recourse"],
     "可撤销": ["可撤销", "撤销", "revocable"],
     "电子票据": ["电子票据", "电子票", "electronic"],
-    "销售组织": ["销售组织", "销售部门组织", "sales_org"],
     "销售部门": ["销售部门", "sales_dept"],
     "销售员": ["销售员", "销售人员", "salesman", "业务员"],
     "收款银行网点": ["收款银行网点", "收款开户行", "收款银行"],
@@ -105,11 +105,11 @@ def _build_template_fields() -> list[TemplateField]:
         ("可撤销", False),
         ("电子票据", False),
         ("*收票日", True),
-        ("收款组织", False),
-        ("结算组织", False),
+        ("*收款组织", True),
+        ("*结算组织", True),
         ("*付款单位", True),
         ("*付款单位多资料值", True),
-        ("销售组织", False),
+        ("*销售组织", True),
         ("销售部门", False),
         ("销售员", False),
         ("收款银行网点", False),
@@ -152,9 +152,25 @@ FIXED_FIELDS: dict[str, Any] = {
     "*币别": "人民币",
     "*背书明细/导入序号": "blank",
     "*汇率": 1.0,
-    "*付款单位多资料值": "客户",
+    # 付款单位固定默认「客户」，不进入配置映射对话框、不参与来源列匹配
+    "*付款单位": "客户",
 }
 FIXED_FIELD_HEADERS = set(FIXED_FIELDS.keys())
+
+# ===== 页面输入字段（不进映射匹配，取值来自主界面用户填写）=====
+# 这些字段在「配置映射」对话框中显示为只读（实际值 = 页面「收款组织」文本框），
+# 不参与来源列匹配，也不计入「缺少必录」提示；其中「结算组织」「销售组织」
+# 恒等于「收款组织」（销售组织按用户规定必填且 = 收款组织）。
+PAGE_INPUT_FIELDS: set[str] = {"收款组织", "结算组织", "销售组织"}
+# 对应模板表头（带 *，与 TEMPLATE_FIELDS 中的 header 一致）
+PAGE_INPUT_HEADERS: set[str] = {f"*{n}" for n in PAGE_INPUT_FIELDS}
+
+# ===== 默认不匹配字段 =====
+# 这些字段虽是必录，但来源表头写法差异太大、自动匹配常常出错，
+# 因此 match_columns 自动匹配阶段跳过它们，默认「不匹配/固定值」，
+# 由用户在「字段映射配置」中手动选择来源列。
+# 注意：仍可被用户的手工映射（manual_map）命中，保存后持久化生效。
+NO_AUTO_MATCH_HEADERS: set[str] = {"*收票日", "*付款单位多资料值"}
 
 # 用于必录缺值红标 / 缺失必录判断时排除固定字段（它们由系统保证填充）。
 # 例：*背书明细/导入序号 固定留空，不应被标红或列为缺录。
@@ -358,6 +374,7 @@ def match_columns(
              if f.header.lstrip("*") == tgt_name or f.header == tgt_name), None
         )
         if (tgt_field and tgt_field.header not in FIXED_FIELD_HEADERS
+                and tgt_field.header not in PAGE_INPUT_HEADERS
                 and src not in used_sources):
             matched.append(ColumnMatch(src, tgt_field.header, tgt_field.col_letter, 1.0, False))
             used_targets.add(tgt_field.header)
@@ -375,6 +392,10 @@ def match_columns(
             if tf.header in used_targets:
                 continue
             if tf.header in FIXED_FIELD_HEADERS:
+                continue
+            if tf.header in PAGE_INPUT_HEADERS:
+                continue
+            if tf.header in NO_AUTO_MATCH_HEADERS:
                 continue
             if excluded_targets and tf.header in excluded_targets:
                 continue
@@ -395,7 +416,8 @@ def match_columns(
     unmatched = [h for h in source_headers if h.strip() and h not in used_sources]
     missing_req = [tf.header for tf in TEMPLATE_FIELDS
                    if tf.required and tf.header not in used_targets
-                   and tf.header not in FIXED_FIELD_HEADERS]
+                   and tf.header not in FIXED_FIELD_HEADERS
+                   and tf.header not in PAGE_INPUT_HEADERS]
 
     return matched, unmatched, missing_req
 
@@ -586,33 +608,23 @@ def read_and_transform(
                         elif tf.header == "*导入序号":
                             record[tf.header] = seq
 
-            # 收款组织：从 defaults 取默认值（用户自行填写）
-            recv_org_field = "收款组织"
-            if (recv_org_field not in record
-                    or record.get(recv_org_field) in (None, "")):
-                if recv_org_field in defaults and defaults[recv_org_field] is not None:
-                    record[recv_org_field] = defaults[recv_org_field]
-
-            # 结算组织 = 收款组织
-            settle_org_field = "结算组织"
-            if (settle_org_field not in record
-                    or record.get(settle_org_field) in (None, "")):
-                recv_val = record.get(recv_org_field)
-                if recv_val not in (None, ""):
-                    record[settle_org_field] = recv_val
-                elif settle_org_field in defaults and defaults[settle_org_field] is not None:
-                    record[settle_org_field] = defaults[settle_org_field]
-
-            # 付款单位默认"客户"
-            payer_field = "*付款单位"
-            if (payer_field not in record
-                    or record.get(payer_field) in (None, "")):
-                if payer_field in defaults and defaults[payer_field] is not None:
-                    record[payer_field] = defaults[payer_field]
-                else:
-                    record[payer_field] = "客户"
+            # 页面输入字段：收款组织 = 页面填写值；
+            # 结算组织 = 收款组织；销售组织 = 收款组织（用户规定必填且相等）。
+            # 三者均不来自来源列（已在 match_columns 中排除匹配），
+            # 使用带 * 的表头键，保证 write_to_template 能正确落列。
+            recv_header = "*收款组织"
+            settle_header = "*结算组织"
+            sales_header = "*销售组织"
+            _recv = record.get(recv_header)
+            if _recv in (None, ""):
+                _recv = defaults.get(recv_header) or defaults.get("收款组织")
+            if _recv not in (None, ""):
+                record[recv_header] = _recv
+                record[settle_header] = _recv
+                record[sales_header] = _recv
 
             # 固定字段：始终按规则填充，优先级最高（覆盖来源列/默认值）
+            # 注：*付款单位 已在 FIXED_FIELDS 中固定为「客户」
             for hdr, rule in FIXED_FIELDS.items():
                 if rule == "auto_seq":
                     record[hdr] = seq

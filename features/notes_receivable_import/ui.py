@@ -34,6 +34,7 @@ from PySide6.QtGui import (
     QDragEnterEvent,
     QDropEvent,
     QColor,
+    QFont,
     QStandardItem,
     QStandardItemModel,
 )
@@ -51,7 +52,6 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
-    QSplitter,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -86,6 +86,16 @@ class _EditableTableView(QTableView):
         self.horizontalHeader().setStretchLastSection(True)
 
 
+class _NoWheelComboBox(QComboBox):
+    """下拉框：禁用鼠标滚轮切换选项，只能点箭头展开选择。
+
+    滚轮事件忽略后向上传递给滚动区，使对话框可正常滚动浏览而不误改值。
+    """
+
+    def wheelEvent(self, event: QEvent) -> None:  # noqa: D401, N802
+        event.ignore()
+
+
 class MappingDialog(QDialog):
     """字段映射配置对话框。
 
@@ -94,6 +104,10 @@ class MappingDialog(QDialog):
     默认值 = 自动匹配结果（或上次保存的手动映射）。
     实时冲突提示：同一来源列被多个字段重复选择 → 标红；必录字段未匹配 → 警告。
     支持多文件：顶部文件下拉切换，每个文件独立维护一份映射。
+
+    固定字段（导入序号/票据类型/币别/汇率/背书明细/付款单位）与
+    页面输入字段（收款组织/结算组织/销售组织）不在对话框中显示，
+    由系统按规则自动填充。
 
     result_maps 属性返回 {file_name: {tgt_header: src_header_or_None}}。
     """
@@ -113,15 +127,16 @@ class MappingDialog(QDialog):
         self._auto = {f["name"]: dict(f["auto_map"]) for f in files_info}
         # 当前编辑态（用户每次改动实时写回这里）
         self._editing: dict[str, dict[str, str | None]] = {}
+        # 固定字段 / 页面输入字段由系统处理，不进入对话框编辑态
+        skip_headers = _logic.FIXED_FIELD_HEADERS | _logic.PAGE_INPUT_HEADERS
         for f in files_info:
-            # 固定字段由系统自动填充，不进入对话框编辑态
             base = {
                 tf.header: f["current_map"].get(tf.header)
                 for tf in template_fields
-                if tf.header not in _logic.FIXED_FIELD_HEADERS
+                if tf.header not in skip_headers
             }
             for tf in template_fields:
-                if tf.header not in _logic.FIXED_FIELD_HEADERS:
+                if tf.header not in skip_headers:
                     base.setdefault(tf.header, None)
             self._editing[f["name"]] = base
         self._template_fields = template_fields
@@ -154,7 +169,9 @@ class MappingDialog(QDialog):
         desc = QLabel(
             "必录字段排在最前（带 * 标红）；非必录字段默认留空，如需映射请在右侧下拉选择来源列。"
             "下拉默认已是自动匹配结果，只需调整不满意的几行。"
-            "（导入序号、票据类型、币别、汇率、背书明细由系统自动填充，此处不可更改）",
+            "（收票日、付款单位多资料值 因来源写法差异大、常匹配出错，默认「不匹配」，请手动选择来源列；"
+            "导入序号、票据类型、币别、汇率、背书明细、收款组织、结算组织、销售组织 "
+            "由系统按规则自动填充，不在本配置中显示）",
             self,
         )
         desc.setObjectName("pageDesc")
@@ -165,7 +182,7 @@ class MappingDialog(QDialog):
         if len(self._names) > 1:
             fsel = QHBoxLayout()
             fsel.addWidget(QLabel("来源文件：", self))
-            self._file_combo = QComboBox(self)
+            self._file_combo = _NoWheelComboBox(self)
             self._file_combo.addItems(self._names)
             self._file_combo.setFixedHeight(30)
             self._file_combo.currentTextChanged.connect(self._on_file_switch)
@@ -255,7 +272,12 @@ class MappingDialog(QDialog):
             # 固定字段不显示在对话框中（由系统自动填充）
             if tf.header in _logic.FIXED_FIELD_HEADERS:
                 continue
-            # 左列：模板字段名（必录标红）
+            # 页面输入字段（收款组织/结算组织/销售组织）也不在对话框显示：
+            # 三者由系统按页面「收款组织」自动填充（结算组织=收款组织、销售组织=收款组织），
+            # 用户要求不出现在字段映射配置里，故整行跳过。
+            if tf.header in _logic.PAGE_INPUT_HEADERS:
+                continue
+            # 左列：模板字段名（必录标红）——两个分支共用
             lbl = QLabel(tf.header, self._content)
             lbl.setObjectName("cardTitle" if not tf.required else "reqField")
             if tf.required:
@@ -265,8 +287,8 @@ class MappingDialog(QDialog):
             lbl.setFixedHeight(30)
             lbl.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
 
-            # 右列：下拉
-            combo = QComboBox(self._content)
+            # 右列：下拉（禁用滚轮，只能点箭头选择）
+            combo = _NoWheelComboBox(self._content)
             combo.setFixedHeight(30)
             # 哨兵项（不匹配/固定值）
             combo.addItem("〈不匹配/固定值〉", _SENTINEL)
@@ -282,6 +304,18 @@ class MappingDialog(QDialog):
             self._grid.addWidget(combo, r, 1)
             self._row_widgets.append((tf, lbl, combo))
             r += 1
+
+            # 付款单位多资料值 下方提示：代表票据前一手客户（付款客户名称）
+            if tf.header == "*付款单位多资料值":
+                hint = QLabel(
+                    "提示：此字段代表「票据前一手客户」，即付款客户名称。",
+                    self._content)
+                hint.setObjectName("pageDesc")
+                hint.setStyleSheet("color: #6B7280; font-size: 11px;")
+                hint.setWordWrap(True)
+                hint.setContentsMargins(0, 0, 0, 6)
+                self._grid.addWidget(hint, r, 0, 1, 2)
+                r += 1
 
     @staticmethod
     def _index_for(combo: QComboBox, src: str | None) -> int:
@@ -314,12 +348,13 @@ class MappingDialog(QDialog):
         return None
 
     def _restore_auto(self) -> None:
-        """把当前文件的映射重置为自动匹配结果（仅非固定字段）。"""
+        """把当前文件的映射重置为自动匹配结果（仅非固定/非页面输入字段）。"""
         auto = self._auto.get(self._current, {})
+        skip = _logic.FIXED_FIELD_HEADERS | _logic.PAGE_INPUT_HEADERS
         self._editing[self._current] = {
             tf.header: auto.get(tf.header)
             for tf in self._template_fields
-            if tf.header not in _logic.FIXED_FIELD_HEADERS
+            if tf.header not in skip
         }
         # 重新载入下拉
         self._load_file(self._current)
@@ -377,19 +412,96 @@ class MappingDialog(QDialog):
     # ====== 结果 ======
 
     def accept(self) -> None:
-        # 把每个文件的编辑态整理为最终结果（"" 归一为 None），排除固定字段
+        # 把每个文件的编辑态整理为最终结果（"" 归一为 None），
+        # 排除固定字段与页面输入字段（二者由系统处理）
+        skip = _logic.FIXED_FIELD_HEADERS | _logic.PAGE_INPUT_HEADERS
         for name in self._names:
             mp = self._editing.get(name, {})
             self._result_maps[name] = {
                 tgt: (src if src not in (None, _SENTINEL) else None)
                 for tgt, src in mp.items()
-                if tgt not in _logic.FIXED_FIELD_HEADERS
+                if tgt not in skip
             }
         super().accept()
 
     @property
     def result_maps(self) -> dict[str, dict[str, str | None]]:
         return self._result_maps
+
+
+class PreviewDialog(QDialog):
+    """数据预览弹窗：以独立大窗口展示可编辑表格。
+
+    与主界面共享同一个 QStandardItemModel——弹窗内双击编辑即实时写回，
+    关闭后主界面导出时使用最新数据。「保存」按钮显式把编辑收集回
+    self._table_data 并给出日志反馈；「关闭」直接关闭（数据已在模型中）。
+    """
+
+    def __init__(self, parent: QWidget | None, model: QStandardItemModel,
+                 row_count: int) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("数据预览（可编辑）")
+        self.setMinimumSize(900, 640)
+        # 尽量放大到屏幕 85%（无屏幕/无头环境回退到最小尺寸）
+        try:
+            screen = QApplication.primaryScreen()
+            if screen is not None:
+                geo = screen.availableGeometry()
+                self.resize(int(geo.width() * 0.85), int(geo.height() * 0.85))
+        except Exception:
+            pass
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 16, 20, 16)
+        root.setSpacing(12)
+
+        head = QHBoxLayout()
+        t_lbl = QLabel("数据预览（双击单元格可编辑，红色 = 缺少必录值）", self)
+        t_lbl.setObjectName("pageTitle")
+        head.addWidget(t_lbl)
+        head.addStretch(1)
+        rc = QLabel(f"{row_count} 行", self)
+        rc.setObjectName("pageDesc")
+        head.addWidget(rc)
+        root.addLayout(head)
+
+        self._view = _EditableTableView(self)
+        self._view.setModel(model)
+        root.addWidget(self._view, stretch=1)
+
+        # 按钮行：保存 + 关闭
+        btns = QHBoxLayout()
+        btns.addStretch(1)
+        self._btn_save = QPushButton("保存", self)
+        self._btn_save.setObjectName("primary")
+        self._btn_save.setFixedHeight(34)
+        self._btn_save.setMinimumWidth(120)
+        self._btn_save.clicked.connect(self._on_save)
+        btns.addWidget(self._btn_save)
+        self._btn_close = QPushButton("关闭", self)
+        self._btn_close.setFixedHeight(34)
+        self._btn_close.setMinimumWidth(120)
+        self._btn_close.clicked.connect(self.accept)
+        btns.addWidget(self._btn_close)
+        root.addLayout(btns)
+
+        # 显示后根据内容自适应列宽（仅在弹窗可见时有意义，无头下不触发）
+        QTimer.singleShot(0, self._auto_size)
+
+    def _auto_size(self) -> None:
+        try:
+            self._view.resizeColumnsToContents()
+            mdl = self._view.model()
+            if mdl is not None and mdl.columnCount() > 0:
+                self._view.setColumnWidth(0, 50)
+        except Exception:
+            pass
+
+    def _on_save(self) -> None:
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "_on_preview_save"):
+            parent._on_preview_save()
+        self.accept()
 
 
 class NotesReceivableImportWidget(QWidget):
@@ -443,7 +555,8 @@ class NotesReceivableImportWidget(QWidget):
                     clean[name] = {
                         tgt: (src if src not in (None, "") else None)
                         for tgt, src in mp.items()
-                        if tgt not in _logic.FIXED_FIELD_HEADERS
+                        if tgt not in (_logic.FIXED_FIELD_HEADERS
+                                       | _logic.PAGE_INPUT_HEADERS)
                     }
             return clean
         except (json.JSONDecodeError, OSError) as e:
@@ -482,7 +595,7 @@ class NotesReceivableImportWidget(QWidget):
         root.addWidget(desc)
         root.addSpacing(theme.SPACING[4])
 
-        # === 卡片1：文件 + 导入 ===
+        # === 卡片1：来源文件 + 统一操作按钮（位于默认值卡片下方）===
         card1 = QFrame(self)
         card1.setObjectName("card")
         c1 = QVBoxLayout(card1)
@@ -490,52 +603,62 @@ class NotesReceivableImportWidget(QWidget):
                                theme.SPACING[16], theme.SPACING[16])
         c1.setSpacing(theme.SPACING[12])
 
-        h1 = QHBoxLayout()
-        h1.setSpacing(theme.SPACING[12])
-        h1_lbl = QLabel("来源文件（拖拽 / 选择）", card1)
-        h1_lbl.setObjectName("cardTitle")
-        h1.addWidget(h1_lbl)
-        h1.addStretch(1)
+        # 标题行
+        h0 = QHBoxLayout()
+        h0.setSpacing(theme.SPACING[12])
+        h0_lbl = QLabel("来源文件（拖拽 / 选择）", card1)
+        h0_lbl.setObjectName("cardTitle")
+        h0.addWidget(h0_lbl)
+        h0.addStretch(1)
+        c1.addLayout(h0)
+
+        # 统一操作按钮行：添加文件 / 配置映射 / 导入 / 导出（大小、颜色一致）
+        h_btn = QHBoxLayout()
+        h_btn.setSpacing(theme.SPACING[12])
+
         btn_add = QPushButton("+ 添加文件", card1)
-        btn_add.setFixedHeight(32)
-        btn_add.setMinimumWidth(100)
+        btn_add.setObjectName("primary")
+        btn_add.setFixedHeight(34)
+        btn_add.setMinimumWidth(120)
         btn_add.clicked.connect(self._add_files)
-        h1.addWidget(btn_add)
-        # 映射配置入口（导入后启用）
+        h_btn.addWidget(btn_add)
+
         self._btn_map = QPushButton("配置映射", card1)
-        self._btn_map.setFixedHeight(32)
-        self._btn_map.setMinimumWidth(100)
+        self._btn_map.setObjectName("primary")
+        self._btn_map.setFixedHeight(34)
+        self._btn_map.setMinimumWidth(120)
         self._btn_map.setEnabled(False)
         self._btn_map.setToolTip("导入后可手工调整列名映射关系")
         self._btn_map.clicked.connect(self._open_mapping_dialog)
-        h1.addWidget(self._btn_map)
-        c1.addLayout(h1)
+        h_btn.addWidget(self._btn_map)
 
-        # 细分隔线，把「文件选择」与「主操作」区隔开
-        divider1 = QFrame(card1)
-        divider1.setFrameShape(QFrame.Shape.HLine)
-        divider1.setFrameShadow(QFrame.Shadow.Plain)
-        divider1.setObjectName("cardDivider")
-        c1.addWidget(divider1)
-
-        # 导入 / 导出：主操作行，等宽突出，右侧附带进度提示
-        h2 = QHBoxLayout()
-        h2.setSpacing(theme.SPACING[12])
         self._btn_import = QPushButton("导入 / 刷新", card1)
         self._btn_import.setObjectName("primary")
         self._btn_import.setFixedHeight(34)
         self._btn_import.setMinimumWidth(120)
         self._btn_import.clicked.connect(self._do_import)
-        h2.addWidget(self._btn_import)
+        h_btn.addWidget(self._btn_import)
+
         self._btn_export = QPushButton("导出 Excel", card1)
         self._btn_export.setObjectName("primary")
         self._btn_export.setFixedHeight(34)
         self._btn_export.setMinimumWidth(120)
         self._btn_export.setEnabled(False)
         self._btn_export.clicked.connect(self._do_export)
-        h2.addWidget(self._btn_export)
-        h2.addStretch(1)
-        c1.addLayout(h2)
+        h_btn.addWidget(self._btn_export)
+
+        # 清除数据：放在导出 Excel 右边，清除已导入文件与预览数据
+        self._btn_clear = QPushButton("清除数据", card1)
+        self._btn_clear.setObjectName("primary")
+        self._btn_clear.setFixedHeight(34)
+        self._btn_clear.setMinimumWidth(120)
+        self._btn_clear.setEnabled(False)
+        self._btn_clear.setToolTip("清除已导入的文件与预览数据")
+        self._btn_clear.clicked.connect(self._clear_data)
+        h_btn.addWidget(self._btn_clear)
+
+        h_btn.addStretch(1)
+        c1.addLayout(h_btn)
 
         # 映射状态行
         self._lbl_map_status = QLabel("尚未导入文件。", card1)
@@ -547,8 +670,6 @@ class NotesReceivableImportWidget(QWidget):
         self._lbl_files.setObjectName("pageDesc")
         self._lbl_files.setWordWrap(True)
         c1.addWidget(self._lbl_files)
-
-        root.addWidget(card1)
 
         # === 卡片2：默认值 + 模板 ===
         card2 = QFrame(self)
@@ -588,47 +709,70 @@ class NotesReceivableImportWidget(QWidget):
         self._edit_recv_org = QLineEdit("", card2)
         self._edit_recv_org.setFixedHeight(30)
         self._edit_recv_org.setPlaceholderText("请填写本单位/我公司名称")
+        self._edit_recv_org.textChanged.connect(self._validate_recv_org)
         dg.addWidget(self._edit_recv_org, 1, 1)
 
         dg.setColumnStretch(1, 1)
         dg.setColumnMinimumWidth(2, 72)
         c2.addLayout(dg)
 
+        # 收款组织未填写时的红色提示（同时禁用「导入」按钮）
+        self._lbl_org_hint = QLabel("", card2)
+        self._lbl_org_hint.setStyleSheet("color: #DC2626; font-weight: 600;")
+        self._lbl_org_hint.setWordWrap(True)
+        c2.addWidget(self._lbl_org_hint)
+
         note = QLabel(
-            "币别 / 票据类型 / 汇率 / 导入序号 / 背书明细 由系统自动填充，无需配置。",
+            "币别 / 票据类型 / 汇率 / 导入序号 / 背书明细 / 付款单位 由系统自动填充；"
+            "收款组织 / 结算组织 / 销售组织 取页面「收款组织」填写值"
+            "（结算组织、销售组织 = 收款组织）。",
             card2)
         note.setObjectName("pageDesc")
         note.setWordWrap(True)
         c2.addWidget(note)
 
         root.addWidget(card2)
+        root.addWidget(card1)
 
-        # === 卡片3：可编辑数据表格 ===
+        # === 卡片3：数据预览（按钮打开大弹窗）===
         card3 = QFrame(self)
         card3.setObjectName("card")
         c3 = QVBoxLayout(card3)
-        c3.setContentsMargins(theme.SPACING[12], theme.SPACING[12],
-                               theme.SPACING[12], theme.SPACING[12])
-        c3.setSpacing(6)
+        c3.setContentsMargins(theme.SPACING[16], theme.SPACING[16],
+                               theme.SPACING[16], theme.SPACING[16])
+        c3.setSpacing(theme.SPACING[12])
 
-        t_head = QHBoxLayout()
-        t_lbl = QLabel("数据预览（可编辑，红色 = 缺少必录值）", card3)
-        t_lbl.setObjectName("cardTitle")
-        t_head.addWidget(t_lbl)
-        t_head.addStretch(1)
+        # 数据模型（供预览弹窗共享，主界面不再内联显示表格）
+        self._model = QStandardItemModel(self)
+
+        p_head = QHBoxLayout()
+        p_lbl = QLabel("数据预览", card3)
+        p_lbl.setObjectName("cardTitle")
+        p_head.addWidget(p_lbl)
+        p_head.addStretch(1)
         self._progress = QLabel("", card3)
         self._progress.setObjectName("pageDesc")
-        t_head.addWidget(self._progress)
+        p_head.addWidget(self._progress)
         self._lbl_row_count = QLabel("", card3)
         self._lbl_row_count.setObjectName("pageDesc")
-        t_head.addWidget(self._lbl_row_count)
-        c3.addLayout(t_head)
+        p_head.addWidget(self._lbl_row_count)
+        c3.addLayout(p_head)
 
-        self._table = _EditableTableView(card3)
-        self._table.setMinimumHeight(200)
-        self._model = QStandardItemModel(self)
-        self._table.setModel(self._model)
-        c3.addWidget(self._table, stretch=1)
+        self._btn_preview = QPushButton("预览数据（可编辑大窗口）", card3)
+        self._btn_preview.setObjectName("primary")
+        self._btn_preview.setFixedHeight(38)
+        self._btn_preview.setEnabled(False)
+        self._btn_preview.setToolTip("打开大窗口查看/编辑完整表格")
+        self._btn_preview.clicked.connect(self._open_preview)
+        c3.addWidget(self._btn_preview)
+
+        note3 = QLabel(
+            "点击「预览数据」打开独立大窗口，支持双击单元格直接修改；"
+            "「保存」把修改写回，再在主界面点「导出 Excel」。",
+            card3)
+        note3.setObjectName("pageDesc")
+        note3.setWordWrap(True)
+        c3.addWidget(note3)
 
         # 日志面板
         log_card = QFrame(self)
@@ -646,17 +790,12 @@ class NotesReceivableImportWidget(QWidget):
         self._log.setMinimumHeight(50)
         lc_lay.addWidget(self._log, stretch=1)
 
-        # 表格区与日志区放入可拖动分栏：默认表格占多数空间，
-        # 用户可按需拖大日志区查看详细匹配信息，比固定高度更灵活。
-        splitter = QSplitter(Qt.Orientation.Vertical, self)
-        splitter.setObjectName("previewSplitter")
-        splitter.setChildrenCollapsible(False)
-        splitter.addWidget(card3)
-        splitter.addWidget(log_card)
-        splitter.setStretchFactor(0, 4)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([420, 120])
-        root.addWidget(splitter, stretch=1)
+        # 预览卡固定高度，日志占剩余空间（不再需要分栏拖拽）
+        root.addWidget(card3)
+        root.addWidget(log_card, stretch=1)
+
+        # 初始校验：收款组织为空时禁用「导入」并给出提示
+        self._validate_recv_org()
 
     # ====== 拖拽 ======
 
@@ -734,21 +873,36 @@ class NotesReceivableImportWidget(QWidget):
             return default
 
     def _get_defaults(self) -> dict[str, object]:
-        # 注：*币别、*票据类型、*汇率、*导入序号、*背书明细/导入序号 为固定字段，
-        # 由 import_logic.FIXED_FIELDS 统一填充（人民币 / 银行承兑汇票 /
-        # 1 / 自动序号 / 留空），此处不再提供默认值入口。
-        # *付款单位 原在「默认值/模板」卡片有输入框，现按用户要求移除该行，
-        # 统一默认「客户」（来源文件匹配到「付款单位」列时仍以来源值为准）。
+        # 注：*币别、*票据类型、*汇率、*导入序号、*背书明细/导入序号、*付款单位
+        # 均为固定字段，由 import_logic.FIXED_FIELDS 统一填充（人民币 / 银行承兑汇票 /
+        # 1 / 自动序号 / 留空 / 「客户」），此处不再提供默认值入口。
+        # *收款组织 取页面「收款组织」文本框（结算组织恒等于收款组织），
+        # 使用带 * 的表头键，确保 read_and_transform / write_to_template 正确落列。
         return {
-            "收款组织": self._edit_recv_org.text().strip() or None,
-            "*付款单位": "客户",
+            "*收款组织": self._edit_recv_org.text().strip() or None,
         }
 
     # ====== 导入（读取+匹配+清洗 → 展示到表格）======
 
+    def _validate_recv_org(self) -> None:
+        """收款组织为空时禁用「导入」按钮并提示；填写后恢复可用。"""
+        has_org = bool(self._edit_recv_org.text().strip())
+        self._btn_import.setEnabled(has_org)
+        if has_org:
+            self._lbl_org_hint.setText("")
+        else:
+            self._lbl_org_hint.setText(
+                "⚠ 收款组织不能为空，请先在上方「默认值 / 模板」卡片填写「收款组织」后再导入。")
+
     def _do_import(self) -> None:
         if not self._files:
             self._log_line("请先添加至少一个来源 Excel 文件。")
+            return
+
+        # 防御性校验：收款组织为空时禁止导入并提示
+        if not self._edit_recv_org.text().strip():
+            self._log_line("⚠ 收款组织不能为空，请先填写后再导入。")
+            self._validate_recv_org()
             return
 
         self._btn_import.setEnabled(False)
@@ -762,7 +916,7 @@ class NotesReceivableImportWidget(QWidget):
         # 由已保存的手工映射推导 positive / excluded 映射
         positive: dict[str, dict[str, str]] = {}
         excluded: dict[str, list[str]] = {}
-        fixed = _logic.FIXED_FIELD_HEADERS
+        fixed = _logic.FIXED_FIELD_HEADERS | _logic.PAGE_INPUT_HEADERS
         for name, mp in self._manual_full.items():
             pos = {src: tgt for tgt, src in mp.items()
                    if src not in (None, "") and tgt not in fixed}
@@ -800,7 +954,7 @@ class NotesReceivableImportWidget(QWidget):
         self._poll_timer.start()
 
     def _on_import_done(self, res: _logic.ImportResult) -> None:
-        self._btn_import.setEnabled(True)
+        self._validate_recv_org()
         self._progress.setText("")
         self._result = res
         self._table_data = list(res.table_data)  # 拷贝一份供 UI 展示/编辑
@@ -828,6 +982,7 @@ class NotesReceivableImportWidget(QWidget):
         has_missing = any(fr.missing_required for fr in res.files)
         if n > 0:
             self._btn_export.setEnabled(True)
+            self._btn_preview.setEnabled(True)
             extra = "；⚠ 部分行缺少必录值（红色标记）" if has_missing else ""
             self._log_line(f"✅ 导入完成：{n} 条记录{extra}")
         else:
@@ -835,13 +990,49 @@ class NotesReceivableImportWidget(QWidget):
 
         # 启用映射配置并刷新状态
         self._btn_map.setEnabled(bool(res.files))
+        self._btn_clear.setEnabled(True)
         self._update_map_status()
 
     def _on_import_fail(self, err: str) -> None:
-        self._btn_import.setEnabled(True)
+        self._validate_recv_org()
         self._progress.setText("")
         self._log_line(f"❌ 导入失败：{err}")
         utils.error("导入失败", f"处理过程中出错：{err}", parent=self)
+
+    # ====== 清除数据 ======
+
+    def _clear_data(self) -> None:
+        """清除已导入文件与预览数据，恢复到初始空状态。
+
+        - 已导入的文件列表
+        - 预览表格数据（QStandardItemModel 清空）
+        - 最近一次导入结果、表格数据缓存
+        - 文件标签 / 行数 / 进度显示
+        - 导出、预览、配置映射、清除 按钮恢复到禁用态
+        """
+        # 若仍有后台任务在跑，先停掉
+        if self._poll_timer is not None:
+            self._poll_timer.stop()
+            self._poll_timer.deleteLater()
+            self._poll_timer = None
+
+        self._files = []
+        self._table_data = []
+        self._result = None
+        self._model.clear()
+
+        self._update_file_label()
+        self._lbl_row_count.setText("")
+        self._progress.setText("")
+
+        self._log.clear()
+        self._btn_export.setEnabled(False)
+        self._btn_preview.setEnabled(False)
+        self._btn_map.setEnabled(False)
+        self._btn_clear.setEnabled(False)
+        self._update_map_status()
+        self._validate_recv_org()  # 导入按钮可用性由「收款组织」是否填写决定
+        self._log_line("🧹 已清除已导入文件与预览数据。")
 
     # ====== 映射状态 / 配置对话框 ======
 
@@ -914,6 +1105,22 @@ class NotesReceivableImportWidget(QWidget):
             # 重新生成（复用导入流程，应用新映射）
             self._do_import()
 
+    # ====== 数据预览弹窗 ======
+
+    def _open_preview(self) -> None:
+        """打开数据预览弹窗（大窗口可编辑表格）。"""
+        if self._model.rowCount() == 0:
+            self._log_line("请先导入文件再预览。")
+            utils.info("提示", "请先导入文件，生成数据后再预览。", parent=self)
+            return
+        dlg = PreviewDialog(self, self._model, len(self._table_data))
+        dlg.exec()
+
+    def _on_preview_save(self) -> None:
+        """预览弹窗「保存」：把弹窗内的编辑收集回主数据并提示。"""
+        self._table_data = self._collect_table_data()
+        self._log_line("💾 已保存预览编辑（写回主数据）。")
+
     # ====== 填充可编辑表格 ======
 
     def _populate_table(self, data: list[dict[str, object]]) -> None:
@@ -922,13 +1129,20 @@ class NotesReceivableImportWidget(QWidget):
         必录字段值为空的单元格用红色背景标记。
         """
         self._model.clear()
-        headers = _logic.TEMPLATE_HEADERS_DISPLAY  # 去掉 * 号的可读表头
-        self._model.setColumnCount(len(headers))
-        self._model.setHorizontalHeaderLabels(headers)
-        self._model.setRowCount(len(data))
-
         # 固定字段（如 *背书明细/导入序号 留空）不参与必录红标判断
         required_set = _logic.REQUIRED_FOR_CHECK
+        # 表头使用带 * 号的原始字段名；必录字段（REQUIRED_FOR_CHECK）标红加粗，
+        # 与「配置映射」对话框风格一致
+        self._model.setColumnCount(len(_logic.TEMPLATE_HEADERS))
+        self._model.setRowCount(len(data))
+        _header_font = QFont()
+        _header_font.setBold(True)
+        for c_idx, tf_header in enumerate(_logic.TEMPLATE_HEADERS):
+            hitem = QStandardItem(tf_header)
+            if tf_header in required_set:
+                hitem.setForeground(QColor("#DC2626"))
+                hitem.setFont(_header_font)
+            self._model.setHorizontalHeaderItem(c_idx, hitem)
 
         for r_idx, record in enumerate(data):
             for c_idx, tf_header in enumerate(_logic.TEMPLATE_HEADERS):
@@ -953,11 +1167,7 @@ class NotesReceivableImportWidget(QWidget):
 
                 self._model.setItem(r_idx, c_idx, item)
 
-        self._table.resizeColumnsToContents()
         self._lbl_row_count.setText(f"{len(data)} 行")
-        # 第一列（序号）宽度固定
-        if len(headers) > 0:
-            self._table.setColumnWidth(0, 50)
 
     # ====== 从表格收集当前数据（含用户编辑）======
 

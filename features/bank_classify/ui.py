@@ -306,7 +306,7 @@ class BankClassifyFeature(FeatureModule):
     主窗口通过 get_widget() 加载此模块的界面，不关心内部实现细节。
     """
 
-    name = "银行分类"
+    name = "票据分类"
     icon = "fa5s.file-excel"
 
     def get_widget(self, parent: QWidget | None = None) -> QWidget:

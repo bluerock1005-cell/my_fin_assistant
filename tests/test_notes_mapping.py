@@ -92,8 +92,11 @@ def test_dialog_conflict_and_restore() -> None:
             "current_map": {},
         }]
         dlg = MappingDialog(None, files_info, L.TEMPLATE_FIELDS)
-        # 固定字段（*导入序号/*票据类型/*币别/*汇率/*背书明细）不在对话框中
-        assert len(dlg._row_widgets) == len(L.TEMPLATE_FIELDS) - len(L.FIXED_FIELD_HEADERS)
+        # 固定字段（*导入序号/*票据类型/*币别/*汇率/*背书明细）与
+        # 页面输入字段（*收款组织/*结算组织/*销售组织）均不在对话框中
+        assert len(dlg._row_widgets) == (len(L.TEMPLATE_FIELDS)
+                                         - len(L.FIXED_FIELD_HEADERS)
+                                         - len(L.PAGE_INPUT_HEADERS))
 
         # 把两个不同字段都选成同一来源列 → 重复冲突（用非固定字段）
         src = "票据（包）号码"
@@ -137,7 +140,7 @@ def test_persistence_roundtrip() -> None:
             "应收票据测试1.xlsx": {
                 "*票据号": "票据（包）号码",
                 "*收票日": None,           # 显式不匹配（非固定字段）
-                "*付款单位": "客户",
+                "*付款单位": "客户",       # 固定字段，保存后回载应被过滤
             }
         }
         w._save_overrides()
@@ -148,8 +151,8 @@ def test_persistence_roundtrip() -> None:
         loaded = w2._manual_full.get("应收票据测试1.xlsx", {})
         assert loaded.get("*票据号") == "票据（包）号码"
         assert loaded.get("*收票日") is None
-        assert loaded.get("*付款单位") == "客户"
         # 固定字段不应出现在保存/回载的映射中
+        assert "*付款单位" not in loaded
         assert "*币别" not in loaded and "*票据类型" not in loaded
     finally:
         _OVERRIDES_FILE.unlink(missing_ok=True)
