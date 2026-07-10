@@ -210,7 +210,9 @@ QLineEdit, QTextEdit, QPlainTextEdit {{
     border-radius: {r['control']}px;
     padding: 6px 10px;
     color: {c['text']};
-    selection-background-color: {c['primary_soft']};
+    /* 必须成对设置：只设背景、不设前景会回落到系统调色板导致选中文字撞色（一片黑/白） */
+    selection-background-color: {c['primary']};
+    selection-color: #FFFFFF;
 }}
 QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {{
     border: 1px solid {c['primary']};
@@ -225,6 +227,9 @@ QTextEdit#logView, QPlainTextEdit#logView {{
     border: 1px solid {c['border']};
     font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
     font-size: {TYPE['helper']}px;
+    /* 深色框选中同样要显式设前景，否则浅色文字落在浅蓝背景上变成"一片白" */
+    selection-background-color: {c['primary']};
+    selection-color: #FFFFFF;
 }}
 
 QPushButton {{
@@ -272,6 +277,13 @@ QProgressBar {{
 QProgressBar::chunk {{
     background-color: {c['primary']};
     border-radius: {r['control']}px;
+}}
+
+/* ===== 表格 / 列表选中（含单元格内文字选中）===== */
+QTableView, QListView, QTreeView {{
+    selection-background-color: {c['primary']};
+    selection-color: #FFFFFF;
+    gridline-color: {c['border']};
 }}
 
 QScrollBar:vertical {{
