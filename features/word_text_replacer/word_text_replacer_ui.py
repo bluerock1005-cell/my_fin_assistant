@@ -196,7 +196,7 @@ class WordTextReplacerWidget(QWidget):
         for _ in range(self._DEFAULT_RULE_ROWS):
             self._add_rule_row()
 
-        root.addWidget(rule_card, stretch=6)
+        root.addWidget(rule_card, stretch=10)
 
         # === 卡片3：运行日志 ===
         log_card = QFrame(self)
@@ -213,7 +213,7 @@ class WordTextReplacerWidget(QWidget):
         self._log = QPlainTextEdit(log_card)
         self._log.setObjectName("logView")
         self._log.setReadOnly(True)
-        self._log.setMinimumHeight(120)
+        self._log.setMinimumHeight(80)
         lc.addWidget(self._log, stretch=1)
 
         root.addWidget(log_card, stretch=1)
