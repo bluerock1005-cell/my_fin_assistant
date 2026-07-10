@@ -153,8 +153,71 @@ QT_QPA_PLATFORM=offscreen .\.venv\Scripts\python.exe -c "import main; print([f.n
 
 > ⚠️ **已知限制**：`run_in_thread` 的 `QThread` 在无显示服务器（offscreen 无头）环境会段错误——这是环境限制，**真实桌面 `python main.py` 有显示服务时正常**。无头环境只验证 import 链、主窗口构建、模块切换，不要在无头环境跑真实 QThread 任务。
 
+## Web 版架构 (React + pywebview)
+
+项目同时提供 **PySide6 原生版** 和 **Web 版** 两种前端，共享同一套纯 Python 业务逻辑层。
+
+### 目录结构
+
+```
+web/                          # Vite + React 前端
+├── index.html               # Vite 入口 HTML
+├── package.json             # React 18 + Vite 6
+├── vite.config.js           # 构建配置 → 输出到 dist/
+└── src/
+    ├── main.jsx             # React 挂载点
+    ├── App.jsx              # 主组件（侧边栏 + 路由 + 3 个功能视图）
+    └── styles.css           # 设计系统（light/dark token + 组件样式）
+
+webview_api.py               # Python API 层（暴露给 JS 的所有方法）
+webview_main.py              # 生产模式启动器（加载 web/dist/）
+run_web.py                   # 统一入口（支持 --dev 开发模式）
+```
+
+### 架构分层
+
+```
+┌─────────────────────────────────────┐
+│  React 18 (Vite 构建)              │  ← 界面、交互、状态展示
+│  App.jsx / styles.css              │     内联 SVG 图标，无外部依赖
+├─────────────────────────────────────┤
+│  window.pywebview.api.*            │  ← pywebview 桥接（自动序列化）
+├─────────────────────────────────────┤
+│  webview_api.py (WebAPI)           │  ← 文件对话框 / 异步线程 / 映射持久化
+│  → features/*_logic.py             │  ← 纯业务逻辑（零 UI 依赖）
+└─────────────────────────────────────┘
+```
+
+### 启动方式
+
+```bash
+# PySide6 原生版（不变）
+python main.py
+
+# Web 版 — 生产模式（需先 npm run build）
+python webview_main.py
+
+# Web 版 — 开发模式（连接 vite dev server，热更新）
+python run_web.py --dev
+
+# 构建前端
+cd web && npm install && npm run build
+```
+
+### 开发约定
+
+- **React 视图只管 UI**：调用 `window.pywebview.api.*` 获取数据/触发操作，不直接 import Python
+- **API 方法返回 dict 或 list**：JSON 可序列化；出错返回 `{"error": "..."}` 不抛异常
+- **重活 async 化**：Excel 读写走 `asyncio.to_thread()`，UI 不卡顿
+- **图标用内联 SVG**：`Icons = { home: <svg>...</svg>, ... }`，不用 emoji、不用外部库
+- **设计系统 CSS 变量**：`--primary`, `--bg`, `--surface-*`, `--text-*` 等；支持 `[data-theme="dark"]` 切换
+
 ## 当前状态
 
 - 已实现：`bank_classify`（银行承兑汇票白名单分类）、`js_bank_statement`（江苏银行对账单复制）、`notes_receivable_import`（应收票据批量导入，含「配置映射」对话框 + 固定字段自动填充 + 映射持久化）
+
+## UI 设计规范（Fluent 风格）
+
+所有功能模块的桌面端 UI 必须遵循统一设计语言，以 `features/notes_receivable_import/ui.py`（应收票据导入）为参考实现。**新增或修改界面前，请先读取 [`docs/fluent_ui_standard.md`](./docs/fluent_ui_standard.md)**——其中包含页面骨架模板、objectName 样式清单、间距常量、按钮 / 卡片 / 日志面板规范、反例与交付前验证清单，可直接照着写。
 - 预留未实现：`features/invoice/`（发票模块，按 `bank_classify` 写法套用即可）
 - 首页模块（home）已移除，功能通过侧边栏直接导航到各模块

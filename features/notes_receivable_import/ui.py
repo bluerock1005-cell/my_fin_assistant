@@ -159,8 +159,8 @@ class MappingDialog(QDialog):
 
     def _setup_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(20, 16, 20, 16)
-        root.setSpacing(12)
+        root.setContentsMargins(theme.PAGE_PAD, theme.PAGE_PAD, theme.PAGE_PAD, theme.PAGE_PAD)
+        root.setSpacing(theme.CARD_GAP)
 
         title = QLabel("字段映射配置", self)
         title.setObjectName("pageTitle")
@@ -452,8 +452,8 @@ class PreviewDialog(QDialog):
             pass
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(20, 16, 20, 16)
-        root.setSpacing(12)
+        root.setContentsMargins(theme.PAGE_PAD, theme.PAGE_PAD, theme.PAGE_PAD, theme.PAGE_PAD)
+        root.setSpacing(theme.CARD_GAP)
 
         head = QHBoxLayout()
         t_lbl = QLabel("数据预览（双击单元格可编辑，红色 = 缺少必录值）", self)
@@ -576,9 +576,8 @@ class NotesReceivableImportWidget(QWidget):
 
     def _setup_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(theme.SPACING[24], theme.SPACING[24],
-                                 theme.SPACING[24], theme.SPACING[24])
-        root.setSpacing(theme.SPACING[16])
+        root.setContentsMargins(theme.PAGE_PAD, theme.PAGE_PAD, theme.PAGE_PAD, theme.PAGE_PAD)
+        root.setSpacing(theme.CARD_GAP)
 
         # --- 页头 ---
         title = QLabel("应收票据批量导入", self)

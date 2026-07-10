@@ -120,6 +120,19 @@ def classify(name: str) -> tuple[str, str]:
     return "", "非21银行承兑汇票"
 
 
+def classify_banks(banks: list[str]) -> list[tuple[int, str, str, str]]:
+    """纯计算：返回逐条分类明细 rows = [(序号, 银行全称, 所属21家银行, 分类), ...]。
+
+    供 UI 层生成「运行日志（分类详情）」的明细段落（对齐 notes_receivable_import
+    的「列匹配详情」写法），不依赖任何界面组件。
+    """
+    rows = []
+    for i, name in enumerate(banks, 1):
+        short, cat = classify(name)
+        rows.append((i, name, short, cat))
+    return rows
+
+
 def _read_text_any_encoding(path: Path) -> str:
     for enc in ("utf-8-sig", "utf-8", "gbk", "gb18030"):
         try:
@@ -231,10 +244,7 @@ def load_banks(input_path: str | None, col_arg: int | None, paste: bool = False)
 
 
 def build_workbook(banks: list[str], out_path: Path) -> tuple[int, int]:
-    rows = []
-    for i, name in enumerate(banks, 1):
-        short, cat = classify(name)
-        rows.append((i, name, short, cat))
+    rows = classify_banks(banks)
 
     wb = openpyxl.Workbook()
     ws = wb.active

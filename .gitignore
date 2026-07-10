@@ -15,6 +15,11 @@ run.log
 *.xlsx
 *.xls
 !_home_ebank_file_corporbank_download_20260708_1000700589143535149662.xls
+
+# Frontend (React/Vite)
+node_modules/
+web/.vite/
+# web/dist/ 已由顶部 dist/ 规则覆盖（构建产物不入库，运行时 npm run build）
 # 运行时生成的用户映射配置（每台机器独立，不入库）
 data/mapping_overrides.json
 

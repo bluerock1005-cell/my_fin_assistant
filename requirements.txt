@@ -3,3 +3,4 @@ qtawesome
 openpyxl==3.1.5
 pyperclip
 xlrd
+pywebview>=6.0

@@ -24,7 +24,6 @@ from PySide6.QtWidgets import (
     QLayout,
     QPlainTextEdit,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -42,7 +41,7 @@ class FlowLayout(QLayout):
     """轻量流式布局：子项从左到右排，到边界自动换行（用于白名单标签云）。
 
     仅依赖 Qt 标准 API，无需额外组件；作为某个 QWidget 的顶层布局时
-    会正确参与 heightForWidth，配合 QScrollArea 工作良好。
+    会正确参与 heightForWidth。
     """
 
     def __init__(self, parent: QWidget | None = None, hspacing: int = 8, vspacing: int = 8) -> None:
@@ -128,21 +127,10 @@ class BankClassifyWidget(QWidget):
     # ----- 布局 -----------------------------------------------------------
 
     def _setup_ui(self) -> None:
-        # 外层滚动容器：下方白名单卡片会增加高度，包一层滚动避免小窗口被裁剪
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        scroll = QScrollArea(self)
-        scroll.setObjectName("pageScroll")
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        content = QWidget(scroll)
-        content.setObjectName("page")
-        self._content = content
-        root = QVBoxLayout(content)
-        root.setContentsMargins(theme.SPACING[24], theme.SPACING[24], theme.SPACING[24], theme.SPACING[24])
-        root.setSpacing(theme.SPACING[16])
+        # 页面根布局直接挂在 self 上（不使用滚动容器，对齐 notes_receivable_import）
+        root = QVBoxLayout(self)
+        root.setContentsMargins(theme.PAGE_PAD, theme.PAGE_PAD, theme.PAGE_PAD, theme.PAGE_PAD)
+        root.setSpacing(theme.CARD_GAP)
 
         # 页头
         title = QLabel("票据银行分类", self)
@@ -168,52 +156,53 @@ class BankClassifyWidget(QWidget):
         ic_lay.setContentsMargins(theme.SPACING[16], theme.SPACING[16], theme.SPACING[16], theme.SPACING[16])
         ic_lay.setSpacing(theme.SPACING[12])
 
+        # 标题行：左侧「银行全称输入」+ 右侧操作按钮（并排）
+        head_row = QHBoxLayout()
+        head_row.setSpacing(theme.SPACING[12])
         head_lbl = QLabel("银行全称输入", input_card)
         head_lbl.setObjectName("cardTitle")
-        ic_lay.addWidget(head_lbl)
+        head_row.addWidget(head_lbl)
+        head_row.addStretch(1)
+        ic_lay.addLayout(head_row)
 
         self._txt_input = QPlainTextEdit(input_card)
         self._txt_input.setObjectName("logView")
         self._txt_input.setPlaceholderText(
-            "在此粘贴银行名称，或点击下方按钮从文件加载...\n每行一个银行全称。"
+            "在此粘贴银行名称，或点击上方按钮从文件加载...\n每行一个银行全称。"
         )
         self._txt_input.setMinimumHeight(140)
+        self._txt_input.setMaximumHeight(140)
+        self._txt_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         ic_lay.addWidget(self._txt_input)
 
-        # 统一操作按钮行：从文件加载 / 从剪贴板粘贴 / 清空 / 导出 Excel（并排，大小、颜色一致）
-        actions = QHBoxLayout()
-        actions.setSpacing(theme.SPACING[12])
-
+        # 统一操作按钮：从文件加载 / 从剪贴板粘贴 / 清空 / 导出 Excel（置于标题右侧）
         btn_load = QPushButton("从文件加载", input_card)
         btn_load.setObjectName("primary")
         btn_load.setFixedHeight(34)
         btn_load.setMinimumWidth(120)
         btn_load.clicked.connect(self._load_file)
-        actions.addWidget(btn_load)
+        head_row.addWidget(btn_load)
 
         btn_paste = QPushButton("从剪贴板粘贴", input_card)
         btn_paste.setObjectName("primary")
         btn_paste.setFixedHeight(34)
         btn_paste.setMinimumWidth(120)
         btn_paste.clicked.connect(self._paste_clipboard)
-        actions.addWidget(btn_paste)
+        head_row.addWidget(btn_paste)
 
         btn_clear = QPushButton("清空", input_card)
         btn_clear.setObjectName("primary")
         btn_clear.setFixedHeight(34)
         btn_clear.setMinimumWidth(120)
         btn_clear.clicked.connect(self._clear)
-        actions.addWidget(btn_clear)
+        head_row.addWidget(btn_clear)
 
         self._btn_run = QPushButton("导出 Excel", input_card)
         self._btn_run.setObjectName("primary")
         self._btn_run.setFixedHeight(34)
         self._btn_run.setMinimumWidth(120)
         self._btn_run.clicked.connect(self._process)
-        actions.addWidget(self._btn_run)
-
-        actions.addStretch(1)
-        ic_lay.addLayout(actions)
+        head_row.addWidget(self._btn_run)
 
         root.addWidget(input_card)
 
@@ -228,19 +217,15 @@ class BankClassifyWidget(QWidget):
         lc_lay = QVBoxLayout(log_card)
         lc_lay.setContentsMargins(theme.SPACING[12], theme.SPACING[12], theme.SPACING[12], theme.SPACING[12])
         lc_lay.setSpacing(6)
-        log_title = QLabel("运行日志", log_card)
+        log_title = QLabel("运行日志（分类详情）", log_card)
         log_title.setObjectName("cardTitle")
         lc_lay.addWidget(log_title)
         self._log = QPlainTextEdit(log_card)
         self._log.setObjectName("logView")
         self._log.setReadOnly(True)
-        self._log.setMinimumHeight(120)
-        lc_lay.addWidget(self._log)
+        self._log.setMinimumHeight(50)
+        lc_lay.addWidget(self._log, stretch=1)
         root.addWidget(log_card, stretch=1)
-
-        # 滚动容器收尾
-        scroll.setWidget(content)
-        outer.addWidget(scroll)
 
     # ----- 21家银行白名单展示 -------------------------------------------
 
@@ -360,12 +345,12 @@ class BankClassifyWidget(QWidget):
             try:
                 text = _logic._read_clipboard()
             except Exception as e:  # noqa: BLE001
-                self._log_line(f"剪贴板读取失败：{e}")
-                self._log_line("剪贴板为空或不可用。")
+                self._log_line(f"❌ 剪贴板读取失败：{e}")
+                self._log_line("⚠ 剪贴板为空或不可用。")
                 return
 
         self._txt_input.appendPlainText(text)
-        self._log_line("已从剪贴板粘贴内容。")
+        self._log_line("ℹ 已从剪贴板粘贴内容。")
 
     def _load_file_by_path(self, file_path: str) -> None:
         """通用的文件加载方法（文件对话框和拖拽都用此方法）。"""
@@ -373,11 +358,11 @@ class BankClassifyWidget(QWidget):
             banks = _logic.load_banks(file_path, None, False)
         except Exception as e:  # noqa: BLE001
             utils.error("加载失败", f"读取文件失败：{e}", parent=self)
-            self._log_line(f"加载失败：{e}")
+            self._log_line(f"❌ 加载失败：{e}")
             return
         self._txt_input.clear()
         self._txt_input.appendPlainText("\n".join(banks))
-        self._log_line(f"已从文件加载 {len(banks)} 条银行名称。")
+        self._log_line(f"ℹ 已从文件加载 {len(banks)} 条银行名称。")
 
     def _load_file(self) -> None:
         p, _ = QFileDialog.getOpenFileName(
@@ -392,13 +377,13 @@ class BankClassifyWidget(QWidget):
 
     def _clear(self) -> None:
         self._txt_input.clear()
-        self._log_line("已清空输入。")
+        self._log_line("ℹ 已清空输入。")
 
     def _process(self) -> None:
         text = self._txt_input.toPlainText().strip()
         banks = [line.strip() for line in text.splitlines() if line.strip()]
         if not banks:
-            self._log_line("未检测到任何银行名称，请先粘贴或加载。")
+            self._log_line("⚠ 未检测到任何银行名称，请先粘贴或加载。")
             return
 
         # 点击后让用户自己选择导出位置（类似 notes_receivable_import 的导出）
@@ -408,13 +393,14 @@ class BankClassifyWidget(QWidget):
             "Excel 文件 (*.xlsx)",
         )
         if not out_path:
-            self._log_line("已取消导出。")
+            self._log_line("ℹ 已取消导出。")
             return
         self._out_path = Path(out_path)
 
         self._btn_run.setEnabled(False)
         self._progress.setText("处理中…")
-        self._log_line(f"开始处理 {len(banks)} 条银行名称 → {self._out_path}")
+        self._log.clear()
+        self._log_line(f"ℹ 开始处理 {len(banks)} 条银行名称 → {self._out_path}")
 
         out_path = self._out_path
         # 使用 ThreadPoolExecutor 代替 QThread/moveToThread 模式，避免跨线程 QObject 生命周期问题
@@ -445,11 +431,23 @@ class BankClassifyWidget(QWidget):
         n_yes, n_no = res
         self._btn_run.setEnabled(True)
         self._progress.setText("")
+        rows = _logic.classify_banks(banks)
+        yes_rows = [r for r in rows if r[3] == "21银行承兑汇票"]
+        no_rows = [r for r in rows if r[3] == "非21银行承兑汇票"]
         self._log_line(
-            f"完成：总计 {len(banks)} 条 | "
+            f"✅ 完成：总计 {len(banks)} 条 | "
             f"21银行承兑汇票 {n_yes} 条 | 非21银行承兑汇票 {n_no} 条"
         )
-        self._log_line(f"已生成：{self._out_path}")
+        self._log_line("ℹ 分类明细：")
+        self._log_line(
+            f"  · 21银行承兑汇票（{len(yes_rows)} 家）："
+            + ("、".join(r[1] for r in yes_rows) or "（无）")
+        )
+        self._log_line(
+            f"  · 非21银行承兑汇票（{len(no_rows)} 家）："
+            + ("、".join(r[1] for r in no_rows) or "（无）")
+        )
+        self._log_line(f"✅ 已生成：{self._out_path}")
         from PySide6.QtCore import QTimer
         QTimer.singleShot(0, lambda: utils.info(
             "完成",
@@ -462,7 +460,7 @@ class BankClassifyWidget(QWidget):
     def _on_fail(self, err: str) -> None:
         self._btn_run.setEnabled(True)
         self._progress.setText("")
-        self._log_line(f"生成失败：{err}")
+        self._log_line(f"❌ 生成失败：{err}")
         from PySide6.QtCore import QTimer
         QTimer.singleShot(0, lambda: utils.error("生成失败", f"生成 Excel 失败：{err}", parent=self))
 

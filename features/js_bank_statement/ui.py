@@ -60,8 +60,8 @@ class JsBankStmtWidget(QWidget):
 
     def _setup_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(theme.SPACING[24], theme.SPACING[24], theme.SPACING[24], theme.SPACING[24])
-        root.setSpacing(theme.SPACING[12])
+        root.setContentsMargins(theme.PAGE_PAD, theme.PAGE_PAD, theme.PAGE_PAD, theme.PAGE_PAD)
+        root.setSpacing(theme.CARD_GAP)
 
         title = QLabel("江苏银行对账单复制", self)
         title.setObjectName("pageTitle")
