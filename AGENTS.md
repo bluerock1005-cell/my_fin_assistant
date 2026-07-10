@@ -10,7 +10,7 @@
 1. **主窗口做"壳"，不写业务逻辑。** `core/main_window.py` 只负责导航（侧边栏 + 内容区 `QStackedWidget`）与模块装载，绝不放具体功能代码。
 2. **统一接口 `FeatureModule`。** 每个功能模块暴露一个继承 `core.feature_base.FeatureModule` 的类，主窗口只通过 `get_widget(parent)` 装载，**不 import 模块内部细节**。
 3. **`FEATURES` 注册表统一装载。** 加新功能只在 `main.py` 追加一行实例化（用 `try/except` 包裹），主窗口逻辑无需改动。
-4. **UI 与逻辑严格分离。** `features/<模块>/ui.py` 管界面交互；`features/<模块>/*_logic.py` 放纯计算/数据处理，**不依赖 UI、可单独测试**。
+4. **UI 与逻辑严格分离。** `features/<模块>/<模块>_ui.py` 管界面交互；`features/<模块>/*_logic.py` 放纯计算/数据处理，**不依赖 UI、可单独测试**。
 
 ## 技术栈
 
@@ -38,13 +38,13 @@ my_fin_assistant/
 └── features/
     # 首页模块已移除；功能由侧栏直接导航到各模块
     ├── bank_classify/
-    │   ├── ui.py               # 界面（BankClassifyFeature + BankClassifyWidget）
+    │   ├── bank_classify_ui.py               # 界面（BankClassifyFeature + BankClassifyWidget）
     │   └── classify_logic.py   # 纯业务逻辑（白名单匹配/加载/写出 Excel）
     ├── js_bank_statement/
-    │   ├── ui.py               # 界面（JsBankStmtFeature + JsBankStmtWidget）
+    │   ├── js_bank_statement_ui.py               # 界面（JsBankStmtFeature + JsBankStmtWidget）
     │   └── logic.py            # 纯业务逻辑（Excel 读取，保留日期/数字原始类型）
     └── notes_receivable_import/
-        ├── ui.py               # 界面（NotesReceivableImportFeature + NotesReceivableImportWidget）
+        ├── notes_receivable_import_ui.py               # 界面（NotesReceivableImportFeature + NotesReceivableImportWidget）
         │                       #   + MappingDialog（映射配置对话框，下拉+冲突提示+持久化）
         └── import_logic.py     # 纯业务逻辑（多来源读取/列名匹配/清洗/写入模板）
 ```
@@ -83,7 +83,7 @@ my_fin_assistant/
 
 **DON'T**
 - ❌ 在 `core/main_window.py` 写任何业务逻辑
-- ❌ 在 `ui.py` 里直接做重计算或文件 IO（放到 `*_logic.py`）
+- ❌ 在 `<模块>_ui.py` 里直接做重计算或文件 IO（放到 `*_logic.py`）
 - ❌ 硬编码颜色、字体、尺寸（用 `theme.COLOR` 等）
 - ❌ 硬编码路径（用 `app_config.DATA_DIR` 等）
 - ❌ 引入 QFluentWidgets 或其他 GPL 依赖
@@ -91,12 +91,12 @@ my_fin_assistant/
 
 ## 如何新增一个功能模块
 
-1. 建 `features/<模块>/ui.py`（界面，定义 `XxxFeature(FeatureModule)` + `XxxWidget(QWidget)`）与 `features/<模块>/<模块>_logic.py`（纯函数）。
+1. 建 `features/<模块>/<模块>_ui.py`（界面，定义 `XxxFeature(FeatureModule)` + `XxxWidget(QWidget)`）与 `features/<模块>/<模块>_logic.py`（纯函数）。
 2. `XxxFeature` 实现 `name` / `icon` / `get_widget`。
 3. 在 `main.py` 的 `FEATURES` 注册表追加：
    ```python
    try:
-       from features.<模块>.ui import XxxFeature
+       from features.<模块>.<模块>_ui import XxxFeature
        FEATURES.append(XxxFeature())
    except Exception as e:
        print(f"[warn] 跳过 features.<模块>: {e}", file=sys.stderr)
@@ -132,7 +132,7 @@ my_fin_assistant/
   - `FileResult.source_headers` 供对话框下拉使用。
 - `process_files(file_paths, output_path, template_path=None, data_dir=None, manual_maps=None, defaults=None, excluded_maps=None)` → 完整流程并写盘。
 
-**UI 约定**（`ui.py`）：
+**UI 约定**（`<模块>_ui.py`）：
 - `NotesReceivableImportWidget` 继承 `FeatureModule` + `QWidget`；`_do_import` 由持久化映射 `self._manual_full` 推导 `positive`/`excluded` 传入 `read_and_transform`。
 - `MappingDialog(QDialog)`：左列模板字段（必录 `*` 标红）、右列来源列下拉（来源实际列名 + 哨兵 `〈不匹配/固定值〉`）；默认值 = 自动匹配结果；**必录行排在最前、非必录在后**；多文件顶部下拉切换；实时冲突检测（重复来源列红框 + 必录未匹配橙框 + 底部警告条）；含「恢复自动匹配 / 确定 / 取消」。
 - **映射持久化**：确认后写入 `data/mapping_overrides.json`（`{文件名: {模板字段: 来源列 或 null}}`）；启动时 `NotesReceivableImportWidget.__init__` 自动召回，日志透明提示「已载入已保存映射」。
@@ -218,6 +218,6 @@ cd web && npm install && npm run build
 
 ## UI 设计规范（Fluent 风格）
 
-所有功能模块的桌面端 UI 必须遵循统一设计语言，以 `features/notes_receivable_import/ui.py`（应收票据导入）为参考实现。**新增或修改界面前，请先读取 [`docs/fluent_ui_standard.md`](./docs/fluent_ui_standard.md)**——其中包含页面骨架模板、objectName 样式清单、间距常量、按钮 / 卡片 / 日志面板规范、反例与交付前验证清单，可直接照着写。
+所有功能模块的桌面端 UI 必须遵循统一设计语言，以 `features/notes_receivable_import/notes_receivable_import_ui.py`（应收票据导入）为参考实现。**新增或修改界面前，请先读取 [`docs/fluent_ui_standard.md`](./docs/fluent_ui_standard.md)**——其中包含页面骨架模板、objectName 样式清单、间距常量、按钮 / 卡片 / 日志面板规范、反例与交付前验证清单，可直接照着写。
 - 预留未实现：`features/invoice/`（发票模块，按 `bank_classify` 写法套用即可）
 - 首页模块（home）已移除，功能通过侧边栏直接导航到各模块

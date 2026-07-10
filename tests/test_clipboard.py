@@ -3,7 +3,7 @@ os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 import pyperclip
 pyperclip.copy('宁波通商银行股份有限公司杭州分行\n中国民生银行股份有限公司杭州庆春支行')
 from PySide6.QtWidgets import QApplication
-from features.bank_classify.ui import BankClassifyWidget
+from features.bank_classify.bank_classify_ui import BankClassifyWidget
 from features.bank_classify import classify_logic as c
 from pathlib import Path
 app=QApplication([])

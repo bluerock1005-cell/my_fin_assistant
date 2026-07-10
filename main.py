@@ -54,25 +54,25 @@ FEATURES: list = []
 #     print(f"[warn] 跳过 features.home: {e}", file=sys.stderr)
 
 try:
-    from features.bank_classify.ui import BankClassifyFeature
+    from features.bank_classify.bank_classify_ui import BankClassifyFeature
     FEATURES.append(BankClassifyFeature())
 except Exception as e:  # noqa: BLE001
     print(f"[warn] 跳过 features.bank_classify: {e}", file=sys.stderr)
 
 try:
-    from features.js_bank_statement.ui import JsBankStmtFeature
+    from features.js_bank_statement.js_bank_statement_ui import JsBankStmtFeature
     FEATURES.append(JsBankStmtFeature())
 except Exception as e:  # noqa: BLE001
     print(f"[warn] 跳过 features.js_bank_statement: {e}", file=sys.stderr)
 
 # try:
-#     from features.invoice.ui import InvoiceFeature
+#     from features.invoice.invoice_ui import InvoiceFeature
 #     FEATURES.append(InvoiceFeature())
 # except Exception as e:
 #     print(f"[warn] 跳过 features.invoice: {e}", file=sys.stderr)
 
 try:
-    from features.notes_receivable_import.ui import NotesReceivableImportFeature
+    from features.notes_receivable_import.notes_receivable_import_ui import NotesReceivableImportFeature
     FEATURES.append(NotesReceivableImportFeature())
 except Exception as e:  # noqa: BLE001
     print(f"[warn] 跳过 features.notes_receivable_import: {e}", file=sys.stderr)

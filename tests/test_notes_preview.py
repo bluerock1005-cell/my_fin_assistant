@@ -20,7 +20,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QStandardItemModel, QStandardItem
 from PySide6.QtWidgets import QApplication
 
-from features.notes_receivable_import.ui import (
+from features.notes_receivable_import.notes_receivable_import_ui import (
     NotesReceivableImportWidget,
     PreviewDialog,
 )

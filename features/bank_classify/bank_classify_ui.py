@@ -2,10 +2,13 @@
 # -*- coding: utf-8 -*-
 """features/bank_classify/ui.py — 银行承兑汇票分类界面（PySide6 + Fluent）。
 
+工作流：粘贴/加载银行全称 → 点击「导出 Excel」→ 选保存位置 →
+后台分类并写出 Excel（结果同时记录在下方运行日志）。
+
+导出走 ThreadPoolExecutor + QTimer 轮询的后台线程模式，避免界面卡死。
+
 UI 和逻辑严格分离：本文件只管界面与交互，
 纯计算/数据处理放在 classify_logic.py（可单独测试或替换，不用启动界面）。
-
-长耗时操作（生成 Excel）走 core.worker 后台线程，避免界面卡死。
 """
 from __future__ import annotations
 
@@ -31,7 +34,6 @@ from PySide6.QtWidgets import (
 
 from core import app_config, theme, utils
 from core.feature_base import FeatureModule
-from core.worker import run_in_thread
 
 # 纯逻辑层：不导入任何 UI 依赖，可独立测试
 from . import classify_logic as _logic
@@ -111,7 +113,13 @@ class FlowLayout(QLayout):
 
 
 class BankClassifyWidget(QWidget):
-    """银行分类功能的具体 UI 控件（与 FeatureModule 解耦，方便单测）。"""
+    """银行分类功能的具体 UI 控件（与 FeatureModule 解耦，方便单测）。
+
+    工作流（与 notes_receivable_import 对齐）：
+      1. 粘贴/加载银行全称 → 点击「生成分类预览」→ 结果展示到可编辑表格
+      2. 核对无误后点击「导出 Excel」→ 弹窗选路径 → 按原始名单重新计算写出
+      3. 「清除预览」可随时清空表格与已生成的预览结果
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -137,7 +145,7 @@ class BankClassifyWidget(QWidget):
         title.setObjectName("pageTitle")
         desc = QLabel(
             "按 21 家银行白名单，把每行一个银行全称分类为「21银行承兑汇票」与"
-            "「非21银行承兑汇票」，并导出 Excel。",
+            "「非21银行承兑汇票」。点击「导出 Excel」直接分类并保存为 Excel。",
             self,
         )
         desc.setObjectName("pageDesc")
@@ -149,7 +157,7 @@ class BankClassifyWidget(QWidget):
         # 21家银行白名单（可折叠展示）
         root.addWidget(self._build_whitelist_card())
 
-        # 输入卡片
+        # === 卡片1：银行全称输入 + 统一操作按钮（对齐 notes_receivable_import 卡片1风格）===
         input_card = QFrame(self)
         input_card.setObjectName("card")
         ic_lay = QVBoxLayout(input_card)
@@ -175,7 +183,7 @@ class BankClassifyWidget(QWidget):
         self._txt_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         ic_lay.addWidget(self._txt_input)
 
-        # 统一操作按钮：从文件加载 / 从剪贴板粘贴 / 清空 / 导出 Excel（置于标题右侧）
+        # 统一操作按钮：从文件加载 / 从剪贴板粘贴 / 清空 / 生成分类预览（置于标题右侧）
         btn_load = QPushButton("从文件加载", input_card)
         btn_load.setObjectName("primary")
         btn_load.setFixedHeight(34)
@@ -201,15 +209,10 @@ class BankClassifyWidget(QWidget):
         self._btn_run.setObjectName("primary")
         self._btn_run.setFixedHeight(34)
         self._btn_run.setMinimumWidth(120)
-        self._btn_run.clicked.connect(self._process)
+        self._btn_run.clicked.connect(self._do_export)
         head_row.addWidget(self._btn_run)
 
         root.addWidget(input_card)
-
-        # 进度
-        self._progress = QLabel("", self)
-        self._progress.setObjectName("pageDesc")
-        root.addWidget(self._progress)
 
         # 日志面板
         log_card = QFrame(self)
@@ -379,7 +382,9 @@ class BankClassifyWidget(QWidget):
         self._txt_input.clear()
         self._log_line("ℹ 已清空输入。")
 
-    def _process(self) -> None:
+    # ----- 导出 Excel -----------------------------------------------------
+
+    def _do_export(self) -> None:
         text = self._txt_input.toPlainText().strip()
         banks = [line.strip() for line in text.splitlines() if line.strip()]
         if not banks:
@@ -398,9 +403,7 @@ class BankClassifyWidget(QWidget):
         self._out_path = Path(out_path)
 
         self._btn_run.setEnabled(False)
-        self._progress.setText("处理中…")
-        self._log.clear()
-        self._log_line(f"ℹ 开始处理 {len(banks)} 条银行名称 → {self._out_path}")
+        self._log_line(f"ℹ 开始导出 {len(banks)} 条银行名称 → {self._out_path}")
 
         out_path = self._out_path
         # 使用 ThreadPoolExecutor 代替 QThread/moveToThread 模式，避免跨线程 QObject 生命周期问题
@@ -411,9 +414,9 @@ class BankClassifyWidget(QWidget):
                 try:
                     res = self._future.result()
                 except Exception as e:  # noqa: BLE001
-                    self._on_fail(str(e))
+                    self._on_export_fail(str(e))
                 else:
-                    self._on_done(banks, res)
+                    self._on_export_done(banks, res)
                 if self._poll_timer is not None:
                     self._poll_timer.stop()
                     self._poll_timer.deleteLater()
@@ -427,28 +430,13 @@ class BankClassifyWidget(QWidget):
 
     # ----- worker 回调 ----------------------------------------------------
 
-    def _on_done(self, banks: list[str], res) -> None:
+    def _on_export_done(self, banks: list[str], res) -> None:
         n_yes, n_no = res
         self._btn_run.setEnabled(True)
-        self._progress.setText("")
-        rows = _logic.classify_banks(banks)
-        yes_rows = [r for r in rows if r[3] == "21银行承兑汇票"]
-        no_rows = [r for r in rows if r[3] == "非21银行承兑汇票"]
         self._log_line(
-            f"✅ 完成：总计 {len(banks)} 条 | "
-            f"21银行承兑汇票 {n_yes} 条 | 非21银行承兑汇票 {n_no} 条"
+            f"✅ 已生成：{self._out_path}（总计 {len(banks)} 条 | "
+            f"21银行承兑汇票 {n_yes} 条 | 非21银行承兑汇票 {n_no} 条）"
         )
-        self._log_line("ℹ 分类明细：")
-        self._log_line(
-            f"  · 21银行承兑汇票（{len(yes_rows)} 家）："
-            + ("、".join(r[1] for r in yes_rows) or "（无）")
-        )
-        self._log_line(
-            f"  · 非21银行承兑汇票（{len(no_rows)} 家）："
-            + ("、".join(r[1] for r in no_rows) or "（无）")
-        )
-        self._log_line(f"✅ 已生成：{self._out_path}")
-        from PySide6.QtCore import QTimer
         QTimer.singleShot(0, lambda: utils.info(
             "完成",
             f"已生成: {self._out_path}\n"
@@ -457,11 +445,9 @@ class BankClassifyWidget(QWidget):
             parent=self,
         ))
 
-    def _on_fail(self, err: str) -> None:
+    def _on_export_fail(self, err: str) -> None:
         self._btn_run.setEnabled(True)
-        self._progress.setText("")
         self._log_line(f"❌ 生成失败：{err}")
-        from PySide6.QtCore import QTimer
         QTimer.singleShot(0, lambda: utils.error("生成失败", f"生成 Excel 失败：{err}", parent=self))
 
 

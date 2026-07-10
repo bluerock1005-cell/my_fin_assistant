@@ -23,7 +23,7 @@ from pathlib import Path
 from PySide6.QtWidgets import QApplication
 
 from features.notes_receivable_import import import_logic as L
-from features.notes_receivable_import.ui import (
+from features.notes_receivable_import.notes_receivable_import_ui import (
     NotesReceivableImportWidget,
     MappingDialog,
     _OVERRIDES_FILE,

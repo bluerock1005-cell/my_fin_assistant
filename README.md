@@ -29,10 +29,10 @@ my_fin_assistant/
 │   └── test_run_generate.py
 └── features/                   # 功能模块（UI 与逻辑分离）
     ├── bank_classify/          # 银行承兑汇票分类
-    │   ├── ui.py               # 界面（BankClassifyFeature + BankClassifyWidget）
+    │   ├── bank_classify_ui.py               # 界面（BankClassifyFeature + BankClassifyWidget）
     │   └── classify_logic.py   # 纯业务逻辑（白名单匹配 / 加载 / 写出 Excel）
     └── js_bank_statement/      # 江苏银行对账单复制
-        ├── ui.py               # 界面（JsBankStmtFeature + JsBankStmtWidget）
+        ├── js_bank_statement_ui.py               # 界面（JsBankStmtFeature + JsBankStmtWidget）
         └── logic.py            # 纯业务逻辑（Excel 读取，保留日期/数字原始类型）
 ```
 
@@ -67,8 +67,8 @@ python main.py
 
 遵循「UI 与逻辑分离」约定：
 
-1. 在 `features/<你的模块>/` 下建 `ui.py`（界面）与 `*_logic.py`（业务逻辑，纯函数、不依赖 UI）。
-2. `ui.py` 中定义一个继承 `core.feature_base.FeatureModule` 的类，实现：
+1. 在 `features/<你的模块>/` 下建 `<模块>_ui.py`（界面）与 `*_logic.py`（业务逻辑，纯函数、不依赖 UI）。
+2. `<模块>_ui.py` 中定义一个继承 `core.feature_base.FeatureModule` 的类，实现：
    - `name`（英文标识，用于跳转与注册）
    - `icon`（qtawesome 图标名，如 `'fa5s.chart-pie'`）
    - `get_widget(self, parent=None) -> QWidget`
@@ -76,7 +76,7 @@ python main.py
 
 ```python
 try:
-    from features.invoice.ui import InvoiceFeature
+    from features.invoice.invoice_ui import InvoiceFeature
     FEATURES.append(InvoiceFeature())
 except Exception as e:
     print(f"[warn] 跳过 features.invoice: {e}", file=sys.stderr)
