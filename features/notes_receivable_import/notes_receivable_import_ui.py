@@ -743,7 +743,7 @@ class NotesReceivableImportWidget(QWidget):
         # 数据模型（供预览弹窗共享，主界面不再内联显示表格）
         self._model = QStandardItemModel(self)
 
-        # 头部：左「数据预览」+行数/进度；中间灰色说明（居中）；右「预览数据」按钮
+        # 头部：左「数据预览」+行数/进度；中间灰色说明（两行，左对齐）；右「预览数据」按钮
         p_head = QHBoxLayout()
         p_head.setSpacing(theme.SPACING[12])
 
@@ -760,15 +760,23 @@ class NotesReceivableImportWidget(QWidget):
 
         p_head.addStretch(1)
 
-        # 灰色小字：位于标题与按钮之间的中间位置，居中显示
-        note3 = QLabel(
-            "点击「预览数据」打开独立大窗口，支持双击单元格直接修改；"
+        # 灰色小字：位于标题与按钮之间的中间位置，分两行，左对齐
+        note_col = QVBoxLayout()
+        note_col.setSpacing(2)
+        note_col.setContentsMargins(0, 0, 0, 0)
+        note_l1 = QLabel(
+            "点击「预览数据」打开独立大窗口，支持双击单元格直接修改；",
+            card3)
+        note_l1.setObjectName("pageDesc")
+        note_l1.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        note_col.addWidget(note_l1)
+        note_l2 = QLabel(
             "「保存」把修改写回，再在主界面点「导出 Excel」。",
             card3)
-        note3.setObjectName("pageDesc")
-        note3.setWordWrap(True)
-        note3.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        p_head.addWidget(note3)
+        note_l2.setObjectName("pageDesc")
+        note_l2.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        note_col.addWidget(note_l2)
+        p_head.addLayout(note_col)
 
         p_head.addStretch(1)
 
