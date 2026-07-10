@@ -77,6 +77,12 @@ try:
 except Exception as e:  # noqa: BLE001
     print(f"[warn] 跳过 features.notes_receivable_import: {e}", file=sys.stderr)
 
+try:
+    from features.word_text_replacer.word_text_replacer_ui import WordTextReplacerFeature
+    FEATURES.append(WordTextReplacerFeature())
+except Exception as e:  # noqa: BLE001
+    print(f"[warn] 跳过 features.word_text_replacer: {e}", file=sys.stderr)
+
 
 def main() -> int:
     _install_crash_logger()
