@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QLayout,
     QLabel,
     QLineEdit,
     QPlainTextEdit,
@@ -578,6 +579,9 @@ class NotesReceivableImportWidget(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(theme.PAGE_PAD, theme.PAGE_PAD, theme.PAGE_PAD, theme.PAGE_PAD)
         root.setSpacing(theme.CARD_GAP)
+        # 整页不滚动：用最小尺寸约束，窗口拉矮到内容所需高度即到底，
+        # 卡片不被压缩、文字不重叠（替代滚动容器方案）。
+        root.setSizeConstraint(QLayout.SetMinimumSize)
 
         # --- 页头 ---
         title = QLabel("应收票据批量导入", self)
@@ -602,25 +606,21 @@ class NotesReceivableImportWidget(QWidget):
                                theme.SPACING[16], theme.SPACING[16])
         c1.setSpacing(theme.SPACING[12])
 
-        # 标题行
-        h0 = QHBoxLayout()
-        h0.setSpacing(theme.SPACING[12])
-        h0_lbl = QLabel("来源文件（拖拽 / 选择）", card1)
-        h0_lbl.setObjectName("cardTitle")
-        h0.addWidget(h0_lbl)
-        h0.addStretch(1)
-        c1.addLayout(h0)
+        # 标题 + 操作按钮同一行：左「来源文件」文字，右 5 个按钮（去掉独立标题行，降低卡片高度）
+        h_top = QHBoxLayout()
+        h_top.setSpacing(theme.SPACING[12])
 
-        # 统一操作按钮行：添加文件 / 配置映射 / 导入 / 导出（大小、颜色一致）
-        h_btn = QHBoxLayout()
-        h_btn.setSpacing(theme.SPACING[12])
+        h_lbl = QLabel("来源文件（拖拽 / 选择）", card1)
+        h_lbl.setObjectName("cardTitle")
+        h_top.addWidget(h_lbl)
+        h_top.addStretch(1)
 
         btn_add = QPushButton("+ 添加文件", card1)
         btn_add.setObjectName("primary")
         btn_add.setFixedHeight(34)
         btn_add.setMinimumWidth(120)
         btn_add.clicked.connect(self._add_files)
-        h_btn.addWidget(btn_add)
+        h_top.addWidget(btn_add)
 
         self._btn_map = QPushButton("配置映射", card1)
         self._btn_map.setObjectName("primary")
@@ -629,14 +629,14 @@ class NotesReceivableImportWidget(QWidget):
         self._btn_map.setEnabled(False)
         self._btn_map.setToolTip("导入后可手工调整列名映射关系")
         self._btn_map.clicked.connect(self._open_mapping_dialog)
-        h_btn.addWidget(self._btn_map)
+        h_top.addWidget(self._btn_map)
 
         self._btn_import = QPushButton("导入 / 刷新", card1)
         self._btn_import.setObjectName("primary")
         self._btn_import.setFixedHeight(34)
         self._btn_import.setMinimumWidth(120)
         self._btn_import.clicked.connect(self._do_import)
-        h_btn.addWidget(self._btn_import)
+        h_top.addWidget(self._btn_import)
 
         self._btn_export = QPushButton("导出 Excel", card1)
         self._btn_export.setObjectName("primary")
@@ -644,7 +644,7 @@ class NotesReceivableImportWidget(QWidget):
         self._btn_export.setMinimumWidth(120)
         self._btn_export.setEnabled(False)
         self._btn_export.clicked.connect(self._do_export)
-        h_btn.addWidget(self._btn_export)
+        h_top.addWidget(self._btn_export)
 
         # 清除数据：放在导出 Excel 右边，清除已导入文件与预览数据
         self._btn_clear = QPushButton("清除数据", card1)
@@ -654,10 +654,9 @@ class NotesReceivableImportWidget(QWidget):
         self._btn_clear.setEnabled(False)
         self._btn_clear.setToolTip("清除已导入的文件与预览数据")
         self._btn_clear.clicked.connect(self._clear_data)
-        h_btn.addWidget(self._btn_clear)
+        h_top.addWidget(self._btn_clear)
 
-        h_btn.addStretch(1)
-        c1.addLayout(h_btn)
+        c1.addLayout(h_top)
 
         # 映射状态行
         self._lbl_map_status = QLabel("尚未导入文件。", card1)
@@ -737,41 +736,52 @@ class NotesReceivableImportWidget(QWidget):
         card3 = QFrame(self)
         card3.setObjectName("card")
         c3 = QVBoxLayout(card3)
-        c3.setContentsMargins(theme.SPACING[16], theme.SPACING[16],
-                               theme.SPACING[16], theme.SPACING[16])
-        c3.setSpacing(theme.SPACING[12])
+        c3.setContentsMargins(theme.SPACING[16], 10,
+                               theme.SPACING[16], 10)
+        c3.setSpacing(theme.SPACING[8])
 
         # 数据模型（供预览弹窗共享，主界面不再内联显示表格）
         self._model = QStandardItemModel(self)
 
+        # 头部：左「数据预览」+行数/进度；中间灰色说明（居中）；右「预览数据」按钮
         p_head = QHBoxLayout()
+        p_head.setSpacing(theme.SPACING[12])
+
         p_lbl = QLabel("数据预览", card3)
         p_lbl.setObjectName("cardTitle")
         p_head.addWidget(p_lbl)
-        p_head.addStretch(1)
+
         self._progress = QLabel("", card3)
         self._progress.setObjectName("pageDesc")
         p_head.addWidget(self._progress)
         self._lbl_row_count = QLabel("", card3)
         self._lbl_row_count.setObjectName("pageDesc")
         p_head.addWidget(self._lbl_row_count)
-        c3.addLayout(p_head)
 
-        self._btn_preview = QPushButton("预览数据（可编辑大窗口）", card3)
-        self._btn_preview.setObjectName("primary")
-        self._btn_preview.setFixedHeight(38)
-        self._btn_preview.setEnabled(False)
-        self._btn_preview.setToolTip("打开大窗口查看/编辑完整表格")
-        self._btn_preview.clicked.connect(self._open_preview)
-        c3.addWidget(self._btn_preview)
+        p_head.addStretch(1)
 
+        # 灰色小字：位于标题与按钮之间的中间位置，居中显示
         note3 = QLabel(
             "点击「预览数据」打开独立大窗口，支持双击单元格直接修改；"
             "「保存」把修改写回，再在主界面点「导出 Excel」。",
             card3)
         note3.setObjectName("pageDesc")
         note3.setWordWrap(True)
-        c3.addWidget(note3)
+        note3.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        p_head.addWidget(note3)
+
+        p_head.addStretch(1)
+
+        self._btn_preview = QPushButton("预览数据（可编辑大窗口）", card3)
+        self._btn_preview.setObjectName("primary")
+        self._btn_preview.setFixedHeight(34)
+        self._btn_preview.setMinimumWidth(200)
+        self._btn_preview.setEnabled(False)
+        self._btn_preview.setToolTip("打开大窗口查看/编辑完整表格")
+        self._btn_preview.clicked.connect(self._open_preview)
+        p_head.addWidget(self._btn_preview)
+
+        c3.addLayout(p_head)
 
         # 日志面板
         log_card = QFrame(self)
