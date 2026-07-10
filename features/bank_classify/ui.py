@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLayout,
-    QLineEdit,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -169,57 +168,54 @@ class BankClassifyWidget(QWidget):
         ic_lay.setContentsMargins(theme.SPACING[16], theme.SPACING[16], theme.SPACING[16], theme.SPACING[16])
         ic_lay.setSpacing(theme.SPACING[12])
 
-        head = QHBoxLayout()
         head_lbl = QLabel("银行全称输入", input_card)
         head_lbl.setObjectName("cardTitle")
-        head.addWidget(head_lbl)
-        head.addStretch(1)
-        btn_load = QPushButton("从文件加载", input_card)
-        btn_load.setFixedHeight(32)
-        btn_load.clicked.connect(self._load_file)
-        btn_paste = QPushButton("从剪贴板粘贴", input_card)
-        btn_paste.setFixedHeight(32)
-        btn_paste.clicked.connect(self._paste_clipboard)
-        head.addWidget(btn_load)
-        head.addWidget(btn_paste)
-        ic_lay.addLayout(head)
+        ic_lay.addWidget(head_lbl)
 
         self._txt_input = QPlainTextEdit(input_card)
         self._txt_input.setObjectName("logView")
         self._txt_input.setPlaceholderText(
-            "在此粘贴银行名称，或点击上方按钮从文件加载...\n每行一个银行全称。"
+            "在此粘贴银行名称，或点击下方按钮从文件加载...\n每行一个银行全称。"
         )
         self._txt_input.setMinimumHeight(140)
         ic_lay.addWidget(self._txt_input)
 
-        root.addWidget(input_card)
-
-        # 输出路径行
-        out_row = QHBoxLayout()
-        out_row.addWidget(QLabel("输出文件：", self))
-        self._lbl_out = QLineEdit(self)
-        self._lbl_out.setReadOnly(True)
-        self._lbl_out.setText(str(self._out_path))
-        out_row.addWidget(self._lbl_out, stretch=1)
-        btn_browse = QPushButton("浏览", self)
-        btn_browse.setFixedHeight(32)
-        btn_browse.clicked.connect(self._browse_out)
-        out_row.addWidget(btn_browse)
-        root.addLayout(out_row)
-
-        # 主操作
+        # 统一操作按钮行：从文件加载 / 从剪贴板粘贴 / 清空 / 导出 Excel（并排，大小、颜色一致）
         actions = QHBoxLayout()
-        actions.addStretch(1)
-        btn_clear = QPushButton("清空", self)
+        actions.setSpacing(theme.SPACING[12])
+
+        btn_load = QPushButton("从文件加载", input_card)
+        btn_load.setObjectName("primary")
+        btn_load.setFixedHeight(34)
+        btn_load.setMinimumWidth(120)
+        btn_load.clicked.connect(self._load_file)
+        actions.addWidget(btn_load)
+
+        btn_paste = QPushButton("从剪贴板粘贴", input_card)
+        btn_paste.setObjectName("primary")
+        btn_paste.setFixedHeight(34)
+        btn_paste.setMinimumWidth(120)
+        btn_paste.clicked.connect(self._paste_clipboard)
+        actions.addWidget(btn_paste)
+
+        btn_clear = QPushButton("清空", input_card)
+        btn_clear.setObjectName("primary")
         btn_clear.setFixedHeight(34)
+        btn_clear.setMinimumWidth(120)
         btn_clear.clicked.connect(self._clear)
         actions.addWidget(btn_clear)
-        self._btn_run = QPushButton("生成 Excel", self)
+
+        self._btn_run = QPushButton("导出 Excel", input_card)
         self._btn_run.setObjectName("primary")
         self._btn_run.setFixedHeight(34)
+        self._btn_run.setMinimumWidth(120)
         self._btn_run.clicked.connect(self._process)
         actions.addWidget(self._btn_run)
-        root.addLayout(actions)
+
+        actions.addStretch(1)
+        ic_lay.addLayout(actions)
+
+        root.addWidget(input_card)
 
         # 进度
         self._progress = QLabel("", self)
@@ -394,17 +390,6 @@ class BankClassifyWidget(QWidget):
             return
         self._load_file_by_path(p)
 
-    def _browse_out(self) -> None:
-        p, _ = QFileDialog.getSaveFileName(
-            self,
-            "选择输出文件",
-            str(self._out_path),
-            "Excel 文件 (*.xlsx)",
-        )
-        if p:
-            self._out_path = Path(p)
-            self._lbl_out.setText(str(self._out_path))
-
     def _clear(self) -> None:
         self._txt_input.clear()
         self._log_line("已清空输入。")
@@ -416,9 +401,20 @@ class BankClassifyWidget(QWidget):
             self._log_line("未检测到任何银行名称，请先粘贴或加载。")
             return
 
+        # 点击后让用户自己选择导出位置（类似 notes_receivable_import 的导出）
+        out_path, _ = QFileDialog.getSaveFileName(
+            self, "导出 Excel",
+            str(app_config.DEFAULT_OUTPUT_DIR / "银行承兑汇票分类.xlsx"),
+            "Excel 文件 (*.xlsx)",
+        )
+        if not out_path:
+            self._log_line("已取消导出。")
+            return
+        self._out_path = Path(out_path)
+
         self._btn_run.setEnabled(False)
         self._progress.setText("处理中…")
-        self._log_line(f"开始处理 {len(banks)} 条银行名称。")
+        self._log_line(f"开始处理 {len(banks)} 条银行名称 → {self._out_path}")
 
         out_path = self._out_path
         # 使用 ThreadPoolExecutor 代替 QThread/moveToThread 模式，避免跨线程 QObject 生命周期问题
