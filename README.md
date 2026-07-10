@@ -8,6 +8,8 @@
 |---|---|
 | **银行承兑汇票分类** | 加载 Excel，按白名单银行规则自动分类/标记，导出分类结果 |
 | **江苏银行对账单复制** | 加载对账单 Excel，表格查看/排序，支持拖拽导入、框选复制到剪贴板（可直接粘贴到 Excel） |
+| **应收票据批量导入** | 多来源 Excel 读取 → 列名模糊匹配（33 字段模板）→ 可视化「配置映射」确认 → 数据清洗 → 写入固定模板导出，映射规则本地持久化 |
+| **Word 批量文本替换** | 选择输入/输出文件夹，配置多行「查找→替换」规则，可含子文件夹，批量处理 .docx（原文件不受影响） |
 
 ## 📁 目录结构
 
@@ -26,14 +28,22 @@ my_fin_assistant/
 ├── tests/                      # 测试文件
 │   ├── test_clipboard.py
 │   ├── test_direct_thread.py
-│   └── test_run_generate.py
+│   ├── test_notes_mapping.py
+│   ├── test_run_generate.py
+│   └── test_word_text_replacer.py
 └── features/                   # 功能模块（UI 与逻辑分离）
     ├── bank_classify/          # 银行承兑汇票分类
-    │   ├── bank_classify_ui.py               # 界面（BankClassifyFeature + BankClassifyWidget）
-    │   └── classify_logic.py   # 纯业务逻辑（白名单匹配 / 加载 / 写出 Excel）
-    └── js_bank_statement/      # 江苏银行对账单复制
-        ├── js_bank_statement_ui.py               # 界面（JsBankStmtFeature + JsBankStmtWidget）
-        └── logic.py            # 纯业务逻辑（Excel 读取，保留日期/数字原始类型）
+    │   ├── bank_classify_ui.py            # 界面（BankClassifyFeature + BankClassifyWidget）
+    │   └── classify_logic.py              # 纯业务逻辑（白名单匹配 / 加载 / 写出 Excel）
+    ├── js_bank_statement/      # 江苏银行对账单复制
+    │   ├── js_bank_statement_ui.py        # 界面（JsBankStmtFeature + JsBankStmtWidget）
+    │   └── logic.py                       # 纯业务逻辑（Excel 读取，保留日期/数字原始类型）
+    ├── notes_receivable_import/ # 应收票据批量导入
+    │   ├── notes_receivable_import_ui.py  # 界面（含 MappingDialog 映射配置对话框）
+    │   └── import_logic.py                # 纯业务逻辑（多来源读取 / 列名匹配 / 清洗 / 写模板）
+    └── word_text_replacer/     # Word 批量文本替换
+        ├── word_text_replacer_ui.py       # 界面（WordTextReplacerFeature + Widget）
+        └── word_text_replacer_logic.py    # 纯业务逻辑（扫描 / 段落替换 / 批量处理）
 ```
 
 ## 🔧 环境要求
@@ -43,7 +53,7 @@ my_fin_assistant/
 
 ## 📦 安装与运行
 
-依赖已装在项目自带的虚拟环境 `.venv` 中（PySide6、qtawesome、openpyxl）。
+依赖已装在项目自带的虚拟环境 `.venv` 中（PySide6、qtawesome、openpyxl、python-docx、pyperclip、xlrd 等，详见 `requirements.txt`）。
 
 ```bash
 # 1. 进入项目目录
@@ -60,7 +70,7 @@ python main.py
 若需要重新安装依赖：
 
 ```bash
-.\.venv\Scripts\python.exe -m pip install PySide6 qtawesome openpyxl
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
 ## 🧩 新增一个功能模块

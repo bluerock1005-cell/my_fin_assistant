@@ -17,6 +17,7 @@
 - **PySide6 6.11.1**（GUI，非 PyQt5）
 - **qtawesome 1.x**（侧边栏/按钮图标，用图标名字符串，不引入 SVG 文件）
 - **openpyxl 3.1.5**（Excel 读写）
+- **python-docx**（Word `.docx` 读写，供 word_text_replacer 模块）
 - Python 3.10+
 
 > ⚠️ **不要引入 `QFluentWidgets`**。其许可为 GPLv3，与本项目不兼容。本项目用自定义 `QMainWindow` + qtawesome 实现 Fluent 风格（参考 `pyside6_fluent_gui_design` skill 的 `references/`）。
@@ -43,10 +44,13 @@ my_fin_assistant/
     ├── js_bank_statement/
     │   ├── js_bank_statement_ui.py               # 界面（JsBankStmtFeature + JsBankStmtWidget）
     │   └── logic.py            # 纯业务逻辑（Excel 读取，保留日期/数字原始类型）
-    └── notes_receivable_import/
-        ├── notes_receivable_import_ui.py               # 界面（NotesReceivableImportFeature + NotesReceivableImportWidget）
-        │                       #   + MappingDialog（映射配置对话框，下拉+冲突提示+持久化）
-        └── import_logic.py     # 纯业务逻辑（多来源读取/列名匹配/清洗/写入模板）
+    ├── notes_receivable_import/
+    │   ├── notes_receivable_import_ui.py               # 界面（NotesReceivableImportFeature + NotesReceivableImportWidget）
+    │   │                       #   + MappingDialog（映射配置对话框，下拉+冲突提示+持久化）
+    │   └── import_logic.py     # 纯业务逻辑（多来源读取/列名匹配/清洗/写入模板）
+    └── word_text_replacer/
+        ├── word_text_replacer_ui.py               # 界面（WordTextReplacerFeature + WordTextReplacerWidget）
+        └── word_text_replacer_logic.py            # 纯业务逻辑（扫描/段落级替换/批量处理 .docx）
 ```
 
 ## 核心 API 速查
@@ -139,6 +143,24 @@ my_fin_assistant/
 - 固定字段全程从对话框行、`_editing`、`result_maps`、`_load_overrides` 中剔除，也不会出现在默认值卡片。
 
 **测试**：`tests/test_notes_mapping.py`（offscreen 无头）覆盖手工覆盖+显式不匹配、对话框冲突/必录提示/恢复自动/结果结构、持久化回载。
+
+### `features/word_text_replacer/`（Word 批量文本替换）
+
+**主流程**：选择输入文件夹 + 输出文件夹 → 配置多行「查找 → 替换」规则（可含子文件夹）→ 批量处理输入目录下所有 `.docx` → 结果写入输出目录（**原文件不受影响**）。
+
+**接口契约**（`word_text_replacer_logic.py`，纯 Python、零 UI 依赖）：
+- `scan_docx_files(folder, recursive=False)` → `.docx` 路径列表；自动跳过 `~$` 开头的 Word 临时文件。
+- `replace_in_document(doc, rules)` → 段落级替换，尽量保持原有格式；`rules` 为 `[(查找, 替换), …]`。
+- `process_folder(input_dir, output_dir, rules, recursive=False)` → 遍历、替换、写出，返回处理摘要（文件数 / 替换次数等）；校验输入输出目录不相同。
+
+**UI 约定**（`word_text_replacer_ui.py`）：
+- `WordTextReplacerFeature(FeatureModule)` → `WordTextReplacerWidget`；图标 `fa5s.file-word`。
+- 参考 notes_receivable_import 的 Fluent 风格：卡片布局 + 运行日志 + 后台执行（`ThreadPoolExecutor` + `QTimer` 轮询，规避 offscreen 下 QThread 段错误）。
+- 规则区：`替换规则` 标题行 = 标题 + 小字说明 + 「+ 添加一行」+ 「开始替换」（同一行，开始替换在最右）；规则行仅用占位提示（被替换的文字 / 替换后的文字），无表头；规则卡 `stretch=3`、日志卡 `stretch=1`。
+
+**依赖**：`python-docx`（已在 `requirements.txt` 与 venv 中）。
+
+**测试**：`tests/test_word_text_replacer.py`（逻辑层单测）覆盖扫描 / 单文档替换 / 批量处理 / 输入输出目录相同校验。
 
 ## 运行与测试
 
