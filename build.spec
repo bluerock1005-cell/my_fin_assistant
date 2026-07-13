@@ -20,6 +20,16 @@ datas = []
 binaries = []
 hiddenimports = []
 
+# Word COM 自动化依赖（word_text_replacer）：win32com / pythoncom 为
+# 惰性导入（写在函数体内），PyInstaller 静态扫描会漏掉，必须显式声明。
+hiddenimports += [
+    "win32com",
+    "win32com.client",
+    "win32com.shell",
+    "pythoncom",
+    "pywintypes",
+]
+
 # 收集第三方包的数据文件与隐藏依赖（qtawesome 的字体、openpyxl 等）
 for _pkg in ("qtawesome", "openpyxl"):
     _d, _b, _h = collect_all(_pkg)

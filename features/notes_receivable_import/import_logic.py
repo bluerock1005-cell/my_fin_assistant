@@ -234,6 +234,27 @@ def _find_header_row(ws, max_scan: int = 20) -> int | None:
     return best_row
 
 
+def _read_full(file_path: Path) -> tuple[list[str], list[list[Any]]]:
+    """以非 read_only 模式读取（按真实单元格重新计算尺寸）。
+
+    仅当 read_only 模式因 sheet 的 <dimension> 属性损坏而把整表误判为
+    1 行 1 列时使用，作为 read_source_file 的回退路径。
+    """
+    wb = openpyxl.load_workbook(file_path, data_only=True)
+    ws = wb.active
+    hri = _find_header_row(ws) or 1
+    headers = [ws.cell(row=hri, column=c).value
+               for c in range(1, ws.max_column + 1)]
+    headers = [str(v).strip() if v is not None else "" for v in headers]
+    rows: list[list[Any]] = []
+    for r in range(hri + 1, ws.max_row + 1):
+        vals = [ws.cell(row=r, column=c).value
+                for c in range(1, ws.max_column + 1)]
+        if any(v is not None and str(v).strip() for v in vals):
+            rows.append(vals)
+    wb.close()
+    return headers, rows
+
 def read_source_file(file_path: Path) -> tuple[list[str], list[list[Any]]]:
     """读取来源 Excel（.xlsx/.xls），返回 (header_list, data_rows)。
 
@@ -242,13 +263,26 @@ def read_source_file(file_path: Path) -> tuple[list[str], list[list[Any]]]:
     ext = file_path.suffix.lower()
     if ext == ".xls":
         return _read_xls(file_path)
-    # 默认用 openpyxl (.xlsx/.xlsm)
-    wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
-    ws = wb.active
-    header_row_idx = _find_header_row(ws) or 1
-    headers, rows = _extract_rows(ws, header_row_idx)
-    wb.close()
-    return headers, rows
+    # 默认用 openpyxl (.xlsx/.xlsm)。
+    # 注意：部分系统导出的 xlsx 其 sheet 的 <dimension> 属性写错
+    # （例如固定写成 "A1"），read_only 模式会据此把整表误判为 1 行 1 列，
+    # 导致表头/数据全部读空（表现为「导入后无数据、无法配置映射」）。
+    # 因此先以 read_only 读取并探测尺寸，若退化（≤1 行且 ≤1 列）则回退
+    # 到非 read_only 模式（按真实单元格重新计算尺寸）。
+    try:
+        wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+        ws = wb.active
+        if ((getattr(ws, "max_row", 1) or 1) <= 1
+                and (getattr(ws, "max_column", 1) or 1) <= 1):
+            wb.close()
+            return _read_full(file_path)
+        header_row_idx = _find_header_row(ws) or 1
+        headers, rows = _extract_rows(ws, header_row_idx)
+        wb.close()
+        return headers, rows
+    except Exception:
+        # read_only 解析失败时（含 dimension 损坏），回退完整加载
+        return _read_full(file_path)
 
 
 def _read_xls(file_path: Path) -> tuple[list[str], list[list[Any]]]:
