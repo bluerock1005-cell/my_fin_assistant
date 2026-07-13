@@ -17,7 +17,7 @@
 - **PySide6 6.11.1**（GUI，非 PyQt5）
 - **qtawesome 1.x**（侧边栏/按钮图标，用图标名字符串，不引入 SVG 文件）
 - **openpyxl 3.1.5**（Excel 读写）
-- **python-docx**（Word `.docx` 读写，供 word_text_replacer 模块）
+- **python-docx**（Word `.docx` 读写，仅用于 word_text_replacer 测试；运行时替换由 `pywin32`/`win32com` 驱动 Word COM 完成）
 - Python 3.10+
 
 > ⚠️ **不要引入 `QFluentWidgets`**。其许可为 GPLv3，与本项目不兼容。本项目用自定义 `QMainWindow` + qtawesome 实现 Fluent 风格（参考 `pyside6_fluent_gui_design` skill 的 `references/`）。
@@ -50,7 +50,7 @@ my_fin_assistant/
     │   └── import_logic.py     # 纯业务逻辑（多来源读取/列名匹配/清洗/写入模板）
     └── word_text_replacer/
         ├── word_text_replacer_ui.py               # 界面（WordTextReplacerFeature + WordTextReplacerWidget）
-        └── word_text_replacer_logic.py            # 纯业务逻辑（扫描/段落级替换/批量处理 .docx）
+        └── word_text_replacer_logic.py            # 纯业务逻辑（COM/Word 自动化扫描+全故事范围替换+批量处理 .docx；python-docx 仅测试）
 ```
 
 ## 核心 API 速查
@@ -149,18 +149,20 @@ my_fin_assistant/
 **主流程**：选择输入文件夹 + 输出文件夹 → 配置多行「查找 → 替换」规则（可含子文件夹）→ 批量处理输入目录下所有 `.docx` → 结果写入输出目录（**原文件不受影响**）。
 
 **接口契约**（`word_text_replacer_logic.py`，纯 Python、零 UI 依赖）：
+- 替换引擎为 **COM / Word 自动化**（`win32com` 驱动本机 Microsoft Word），可覆盖正文 / 表格 / 页眉 / 页脚 / **文本框**（遍历 `StoryRanges` 全故事范围），并尽量保留原有格式。无 `python-docx` 运行时依赖（`python-docx` 仅测试用）。
+- `win32com` 为**惰性导入**：缺 Word / COM 时模块仍可 import，仅运行 `process_folder` / `replace_in_document` 时抛清晰错误（提示安装 Word 与 pywin32）。
 - `scan_docx_files(folder, recursive=False)` → `.docx` 路径列表；自动跳过 `~$` 开头的 Word 临时文件。
-- `replace_in_document(doc, rules)` → 段落级替换，尽量保持原有格式；`rules` 为 `[(查找, 替换), …]`。
-- `process_folder(input_dir, output_dir, rules, recursive=False)` → 遍历、替换、写出，返回处理摘要（文件数 / 替换次数等）；校验输入输出目录不相同。
+- `replace_in_document(input_path, output_path, rules, word_app=None)` → 调用 Word 替换并另存为 docx；`rules` 为 `[(查找, 替换), …]`；`word_app` 可传入复用的 Word 实例（批量时由 `process_folder` 统一管理生命周期）。
+- `process_folder(input_dir, output_dir, rules, recursive=False)` → 启动 Word 一次、遍历所有 `.docx` 替换写出，返回 `BatchResult`（文件数 / 替换次数等）；校验输入输出目录不相同；源文件绝不回写（另存为到输出目录）。
 
 **UI 约定**（`word_text_replacer_ui.py`）：
 - `WordTextReplacerFeature(FeatureModule)` → `WordTextReplacerWidget`；图标 `fa5s.file-word`。
-- 参考 notes_receivable_import 的 Fluent 风格：卡片布局 + 运行日志 + 后台执行（`ThreadPoolExecutor` + `QTimer` 轮询，规避 offscreen 下 QThread 段错误）。
+- 参考 notes_receivable_import 的 Fluent 风格：卡片布局 + 运行日志 + 后台执行（`ThreadPoolExecutor` + `QTimer` 轮询，规避 offscreen 下 QThread 段错误）。`process_folder` 在后台线程内 `CoInitialize` 并复用同一 Word 实例。
 - 规则区：`替换规则` 标题行 = 标题 + 小字说明 + 「+ 添加一行」+ 「开始替换」（同一行，开始替换在最右）；规则行仅用占位提示（被替换的文字 / 替换后的文字），无表头；规则卡 `stretch=3`、日志卡 `stretch=1`。
 
-**依赖**：`python-docx`（已在 `requirements.txt` 与 venv 中）。
+**依赖**：`pywin32`（运行时，提供 `win32com`）；`python-docx`（仅测试）。
 
-**测试**：`tests/test_word_text_replacer.py`（逻辑层单测）覆盖扫描 / 单文档替换 / 批量处理 / 输入输出目录相同校验。
+**测试**：`tests/test_word_text_replacer.py`（逻辑层单测）。`scan_docx_files` 与「输入输出相同校验」始终运行；涉及真实替换的用例（单文档 / 表格页眉页脚 / 批量）在本机无 Word 时自动 `skip`。
 
 ## 运行与测试
 

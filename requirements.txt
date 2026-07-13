@@ -5,3 +5,4 @@ pyperclip
 xlrd
 pywebview>=6.0
 python-docx
+pywin32

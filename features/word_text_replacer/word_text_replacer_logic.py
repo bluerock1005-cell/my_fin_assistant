@@ -2,14 +2,33 @@
 # -*- coding: utf-8 -*-
 """features/word_text_replacer/word_text_replacer_logic.py — Word 批量文本替换逻辑层。
 
-UI 与逻辑严格分离：本文件只负责文件扫描、docx 读取/替换/保存、结果汇总，
-不依赖任何 Qt 类型。
+实现方式：通过 win32com 驱动本机 **Microsoft Word** 完成查找/替换（COM 自动化）。
+
+相比纯 python-docx 方案的优势：
+- 覆盖**正文、表格单元格、页眉、页脚、文本框**（遍历 Word 的 StoryRanges 全故事范围）；
+- 由 Word 自身执行替换，**最大程度保留原有字体 / 段落格式**；
+- 支持跨 run、跨段落、跨表格的连续文本匹配。
+
+代价（使用前提）：
+- 仅限 Windows，且**本机必须安装 Microsoft Word**；
+- 依赖 `pywin32`（提供 win32com）；
+- COM 必须在已 `CoInitialize` 的线程中使用（UI 层用后台线程处理，本模块负责初始化）。
+
+UI 与逻辑严格分离：本文件不依赖任何 Qt 类型；`win32com` 为惰性导入，
+缺少 Word / COM 时模块仍可 import（仅运行时会抛出清晰错误）。
 """
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+
+# ===== COM 常量（用字面量，避免依赖 gencache 生成的枚举常量） =====
+_WD_REPLACE_NONE = 0  # wdReplaceNone：仅查找、不替换（用于计数）
+_WD_REPLACE_ALL = 2   # wdReplaceAll：替换范围内全部
+_WD_FIND_STOP = 0     # wdFindStop：到范围末尾即停止（不回绕）
+_WD_FMT_DOCX = 16     # wdFormatDocumentDefault：.docx
 
 
 def _is_temp_docx(path: Path) -> bool:
@@ -37,82 +56,177 @@ def scan_docx_files(input_folder: Path, include_subfolders: bool = False) -> lis
     return files
 
 
-def _replace_in_paragraph(paragraph, old: str, new: str) -> int:
-    """在单个段落中替换文本，尽量保持原有格式。
+# ===== COM / Word 生命周期 =====
 
-    python-docx 的 run 可能把一段文字切得很碎（每个字一个 run），
-    直接遍历 run.text 替换容易漏掉跨 run 的匹配。这里采用段落级整体文本替换：
-    收集段落全部 text，执行替换后写回第一个 run，其余 run 清空。
-    这样格式基本保留在原 run 上，且能处理跨 run 文本。
+def _com_word_available() -> bool:
+    """本机是否具备 COM Word 自动化所需的 pywin32。"""
+    try:
+        import win32com  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def _create_word_app(visible: bool = False):
+    """创建并初始化 Word.Application 实例。
+
+    必须在调用线程内调用（内部负责 CoInitialize）；返回的应用实例
+    由调用方在用完后通过 :func:`_quit_word_app` 释放。
+
+    Raises:
+        RuntimeError: 无法启动 Word（未安装 / pywin32 缺失 / 非 Windows）。
+    """
+    import pythoncom
+    import win32com.client
+
+    # 同一线程重复 CoInitialize 会抛错，忽略即可
+    try:
+        pythoncom.CoInitializeEx(pythoncom.COINIT_APARTMENTTHREADED)
+    except pythoncom.error:
+        pass
+
+    try:
+        app = win32com.client.Dispatch("Word.Application")
+    except Exception as exc:  # noqa: BLE001
+        try:
+            pythoncom.CoUninitialize()
+        except Exception:
+            pass
+        raise RuntimeError(
+            "无法启动 Microsoft Word（COM 自动化失败）。请确认：\n"
+            "  1) 当前为 Windows 且已安装 Microsoft Word；\n"
+            "  2) 已安装 pywin32（pip install pywin32）；\n"
+            "  3) Word 未被其他进程独占锁定。"
+        ) from exc
+
+    app.Visible = visible
+    app.DisplayAlerts = False   # 抑制保存/格式等弹窗
+    app.ScreenUpdating = False  # 后台静默处理，提速
+    return app
+
+
+def _quit_word_app(app) -> None:
+    """退出 Word 并释放当前线程的 COM 初始化。对 None 安全。"""
+    if app is None:
+        return
+    try:
+        app.Quit(SaveChanges=False)
+    except Exception:
+        pass
+    try:
+        import pythoncom
+        pythoncom.CoUninitialize()
+    except Exception:
+        pass
+
+
+# ===== 替换核心 =====
+
+def _count_in_range(rng, text: str) -> int:
+    """统计某 story range 内 text 的出现次数（Replace=None，不改变内容）。
+
+    ⚠️ 必须用 wdReplaceNone(0) 计数：用 wdReplaceOne(1) 把文本替换为自身会让
+    Word 在 Range.Find 上崩溃（已验证）。
+    """
+    if not text:
+        return 0
+    count = 0
+    f = rng.Find
+    f.ClearFormatting()
+    while f.Execute(text, False, False, False, False, False,
+                    True, _WD_FIND_STOP, False, text, _WD_REPLACE_NONE):
+        count += 1
+    return count
+
+
+def _replace_all_rules(doc, rules: list[tuple[str, str]]) -> int:
+    """在整篇文档（全部 story range）上，按规则顺序逐条执行「全量替换」。
+
+    关键设计：
+    - **每条规则都重新遍历一次 StoryRanges**，避免上一条规则替换后 range 被折叠，
+      导致后续规则的查找范围残缺；
+    - 计数在 `rng.Duplicate` 副本上进行，实际替换作用在原始 story range 上，
+      以保证正文 / 表格 / 文本框等所有位置都被正确覆盖。
 
     Returns:
-        该段落实际发生替换的次数。
+        全文档累计替换次数。
     """
-    if old == "":
-        return 0
+    total = 0
+    for old, new in rules:
+        if not old:
+            continue
+        for story in doc.StoryRanges:
+            rng = story
+            while rng is not None:
+                n = _count_in_range(rng.Duplicate, old)
+                if n > 0:
+                    f = rng.Find
+                    f.ClearFormatting()
+                    f.Replacement.ClearFormatting()
+                    f.Execute(old, False, False, False, False, False,
+                              True, _WD_FIND_STOP, False, new, _WD_REPLACE_ALL)
+                    total += n
+                rng = rng.NextStoryRange
+    return total
 
-    full_text = paragraph.text
-    if old not in full_text:
-        return 0
 
-    new_text = full_text.replace(old, new)
-    count = full_text.count(old)
-
-    runs = paragraph.runs
-    if not runs:
-        return 0
-
-    runs[0].text = new_text
-    for run in runs[1:]:
-        run.text = ""
-    return count
-
-
-def _replace_in_table(table, old: str, new: str) -> int:
-    """递归替换表格所有单元格段落中的文本。"""
-    count = 0
-    for row in table.rows:
-        for cell in row.cells:
-            for paragraph in cell.paragraphs:
-                count += _replace_in_paragraph(paragraph, old, new)
-            # 嵌套表格
-            for nested in cell.tables:
-                count += _replace_in_table(nested, old, new)
-    return count
+def _replace_in_document_via_com(
+    app, input_path: Path, output_path: Path, rules: list[tuple[str, str]]
+) -> int:
+    """用已创建的 Word 实例替换单篇文档并另存为 docx。"""
+    doc = app.Documents.Open(
+        str(input_path.resolve()),
+        AddToRecentFiles=False,
+        ConfirmConversions=False,
+    )
+    try:
+        total = _replace_all_rules(doc, rules)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        doc.SaveAs(str(output_path.resolve()), FileFormat=_WD_FMT_DOCX)
+        return total
+    finally:
+        try:
+            doc.Close(SaveChanges=False)  # 源文件绝不回写
+        except Exception:
+            pass
 
 
 def replace_in_document(
     input_path: Path,
     output_path: Path,
     rules: list[tuple[str, str]],
+    word_app=None,
 ) -> int:
-    """打开 input_path 的 docx，按规则替换文本后保存到 output_path。
+    """替换单篇 Word 文档中的文本。
 
     Args:
         input_path: 源 docx 路径。
-        output_path: 目标 docx 路径（父目录必须存在或会被创建）。
+        output_path: 目标 docx 路径（父目录会被创建）。
         rules: 替换规则列表，每项为 (old_text, new_text)。
+        word_app: 可选，复用的 Word.Application 实例；
+            为 None 时本函数自行创建并在结束时退出（仅用于单次调用）。
 
     Returns:
-        整个文档的总替换次数。
+        该文档的替换次数。
+
+    Note:
+        调用线程需已 CoInitialize（由 :func:`_create_word_app` 处理）。
     """
-    from docx import Document
+    if not _com_word_available():
+        raise RuntimeError(
+            "本机缺少 pywin32，无法进行 Word COM 替换。请执行：pip install pywin32"
+        )
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    doc = Document(str(input_path))
+    owned = word_app is None
+    app = word_app if word_app is not None else _create_word_app(False)
+    try:
+        return _replace_in_document_via_com(app, input_path, output_path, rules)
+    finally:
+        if owned:
+            _quit_word_app(app)
 
-    total = 0
-    for old, new in rules:
-        if old == "":
-            continue
-        for paragraph in doc.paragraphs:
-            total += _replace_in_paragraph(paragraph, old, new)
-        for table in doc.tables:
-            total += _replace_in_table(table, old, new)
 
-    doc.save(str(output_path))
-    return total
-
+# ===== 数据结果 =====
 
 @dataclass
 class ReplaceResult:
@@ -141,6 +255,8 @@ class BatchResult:
         return self.fail_count == 0
 
 
+# ===== 批量入口 =====
+
 def process_folder(
     input_folder: Path,
     output_folder: Path,
@@ -148,7 +264,7 @@ def process_folder(
     include_subfolders: bool = False,
     progress_callback: Callable[[str], None] | None = None,
 ) -> BatchResult:
-    """批量替换入口。
+    """批量替换入口（COM / Word 自动化）。
 
     Args:
         input_folder: 输入文件夹。
@@ -166,7 +282,7 @@ def process_folder(
 
     log_lines: list[str] = []
 
-    # 校验
+    # ---- 校验（在启动 Word 之前完成，便于即时报错） ----
     if not input_folder or not output_folder:
         raise ValueError("输入文件夹和输出文件夹都必须选择")
     if input_folder == output_folder:
@@ -196,20 +312,25 @@ def process_folder(
     fail_count = 0
     total_replacements = 0
 
-    for src in files:
-        rel = src.relative_to(input_folder)
-        dst = output_folder / rel
-        _log(f"处理：{rel.as_posix()}")
-        try:
-            count = replace_in_document(src, dst, rules)
-            results.append(ReplaceResult(src, dst, count, ok=True))
-            success_count += 1
-            total_replacements += count
-            _log(f"  → 替换 {count} 处，已保存到 {dst.relative_to(output_folder).as_posix()}")
-        except Exception as e:  # noqa: BLE001
-            results.append(ReplaceResult(src, dst, 0, ok=False, error=str(e)))
-            fail_count += 1
-            _log(f"  → 失败：{e}")
+    # 整个批量过程复用同一个 Word 实例（仅启动/退出一次）
+    app = _create_word_app(False)
+    try:
+        for src in files:
+            rel = src.relative_to(input_folder)
+            dst = output_folder / rel
+            _log(f"处理：{rel.as_posix()}")
+            try:
+                count = replace_in_document(src, dst, rules, word_app=app)
+                results.append(ReplaceResult(src, dst, count, ok=True))
+                success_count += 1
+                total_replacements += count
+                _log(f"  → 替换 {count} 处，已保存到 {dst.relative_to(output_folder).as_posix()}")
+            except Exception as e:  # noqa: BLE001
+                results.append(ReplaceResult(src, dst, 0, ok=False, error=str(e)))
+                fail_count += 1
+                _log(f"  → 失败：{e}")
+    finally:
+        _quit_word_app(app)
 
     return BatchResult(
         input_folder=input_folder,

@@ -74,8 +74,9 @@ class WordTextReplacerWidget(QWidget):
         title = QLabel("Word 批量文本替换", self)
         title.setObjectName("pageTitle")
         desc = QLabel(
-            "选择输入/输出文件夹，填写批量替换规则，自动处理所有 .docx 文件。"
-            "原文件不会被修改，结果写入输出文件夹。",
+            "通过本机 Microsoft Word（COM 自动化）批量替换所有 .docx 中的文字，"
+            "可处理正文、表格、页眉、页脚与文本框，并尽量保留原有格式。"
+            "原文件不会被修改，结果写入输出文件夹。需 Windows 且已安装 Word。",
             self,
         )
         desc.setObjectName("pageDesc")
@@ -307,15 +308,15 @@ class WordTextReplacerWidget(QWidget):
     def _start_replace(self) -> None:
         # 校验
         if self._input_folder is None or self._output_folder is None:
-            utils.warning("提示", "请先选择输入文件夹和输出文件夹。", parent=self)
+            utils.warn("提示", "请先选择输入文件夹和输出文件夹。", parent=self)
             return
         if self._input_folder == self._output_folder:
-            utils.warning("提示", "输入文件夹和输出文件夹不能相同，避免覆盖原文件。", parent=self)
+            utils.warn("提示", "输入文件夹和输出文件夹不能相同，避免覆盖原文件。", parent=self)
             return
 
         rules = self._collect_rules()
         if not rules:
-            utils.warning("提示", "请至少填写一条替换规则。", parent=self)
+            utils.warn("提示", "请至少填写一条替换规则。", parent=self)
             return
 
         include_subfolders = self._chk_subfolders.isChecked()
@@ -377,7 +378,7 @@ class WordTextReplacerWidget(QWidget):
         )
         if result.fail_count:
             self._log_line(f"⚠ {result.fail_count} 个文件处理失败，请检查上方日志。")
-            utils.warning(
+            utils.warn(
                 "处理完成（部分失败）",
                 f"成功 {result.success_count} 个，失败 {result.fail_count} 个。\n"
                 f"共替换 {result.total_replacements} 处文本。",
