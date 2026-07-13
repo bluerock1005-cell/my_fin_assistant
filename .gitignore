@@ -12,6 +12,8 @@ build/
 
 # Project
 run.log
+crash.log
+测试文档/
 *.xlsx
 *.xls
 !_home_ebank_file_corporbank_download_20260708_1000700589143535149662.xls
