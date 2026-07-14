@@ -209,6 +209,29 @@ def _find_close_cols(headers: list[str], sep: str) -> list[int] | None:
     return None
 
 
+def _resolve_close_cols(headers: list[str], sep: str) -> list[int] | None:
+    """本期结存（期末/本期结存）列：优先固定 BC(55)/BD(56)/BE(57)，回退动态查找。
+
+    用户确认的源表「本期结存-数量/单价/金额」位于 BC/BD/BE 三列。显式锁定这些
+    固定列可避免「多期间、表头带期号（如期末结存-06-数量）」时动态表头匹配失效、
+    而静默跳过期末清空的问题。
+
+    仅当固定范围超出表宽（表头数不足 57 列）或 BC/BD/BE 表头不含「结存」字样时，
+    才回退到 :func:`_find_close_cols` 按表头查找，保证鲁棒性。
+    """
+    fixed = [55, 56, 57]  # BC, BD, BE（1-based 列号）
+    if len(headers) >= max(fixed):
+        ok = True
+        for c in fixed:
+            h = headers[c - 1] if 0 <= c - 1 < len(headers) else ""
+            if h and "结存" not in h:
+                ok = False
+                break
+        if ok:
+            return fixed
+    return _find_close_cols(headers, sep)
+
+
 def _clear_non_kept_period_rows(
     ws,
     headers: list[str],
@@ -236,14 +259,15 @@ def _clear_non_kept_period_rows(
         return 0
 
     open_cols = _find_open_cols(headers, sep)
-    close_cols = _find_close_cols(headers, sep)
+    # 结存（期末/本期结存）列：优先固定 BC/BD/BE（用户确认的位置），回退动态查找
+    close_cols = _resolve_close_cols(headers, sep)
 
     if keep_open is None and keep_close is None:
         return 0
     if keep_open is not None and open_cols is None:
         log("⚠ 未找到「期初结存」数量/单价/金额列，跳过期初清空")
     if keep_close is not None and close_cols is None:
-        log("⚠ 未找到「期末结存/本期结存」数量/单价/金额列，跳过期末清空")
+        log("⚠ 未找到「期末结存/本期结存」数量/单价/金额列（BC/BD/BE），跳过期末清空")
 
     first_data_row = header_rows + 1
     last_row = int(ws.UsedRange.Rows.Count)

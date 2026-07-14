@@ -92,5 +92,44 @@ def test_find_close_cols_fallback_to_current():
     assert logic._find_close_cols(headers, "-") == [4, 5, 6]
 
 
+def _headers_with_close_at(target: list[str], ncols: int = 57) -> list[str]:
+    """构造 ncols 列的表头，把 BC/BD/BE 设为 target 三列。"""
+    h = [""] * ncols
+    h[1] = "会计期间"
+    h[54], h[55], h[56] = target  # BC, BD, BE（0-based 索引）
+    return h
+
+
+def test_resolve_close_cols_explicit_bc_bd_be():
+    """标准表头：BC/BD/BE 为本期结存数量/单价/金额，应显式锁定 55/56/57。"""
+    headers = _headers_with_close_at(
+        ["本期结存-数量", "本期结存-单价", "本期结存-金额"])
+    assert logic._resolve_close_cols(headers, "-") == [55, 56, 57]
+
+
+def test_resolve_close_cols_explicit_when_dynamic_would_fail():
+    """多期间、表头带期号时动态匹配失效，但显式 BC/BD/BE 仍能命中。"""
+    # BC/BD/BE 变成带期号的「本期结存-06-数量」，且表里没有不含期号的
+    # 「本期结存-数量」——此时 _find_close_cols 会返回 None。
+    headers = _headers_with_close_at(
+        ["本期结存-06-数量", "本期结存-06-单价", "本期结存-06-金额"])
+    assert logic._find_close_cols(headers, "-") is None
+    # 显式路径应忽略表头文本、直接锁定 BC/BD/BE
+    assert logic._resolve_close_cols(headers, "-") == [55, 56, 57]
+
+
+def test_resolve_close_cols_fallback_when_too_narrow():
+    """表头不足 57 列（BC/BD/BE 不存在）时回退动态查找。"""
+    headers = ["会计年度", "会计期间",
+               "期初结存-数量", "本期结存-数量", "本期结存-单价", "本期结存-金额"]
+    assert logic._resolve_close_cols(headers, "-") == [4, 5, 6]
+
+
+def test_resolve_close_cols_fallback_when_not_jiecun():
+    """BC/BD/BE 表头不含「结存」时回退动态查找。"""
+    headers = _headers_with_close_at(["其他列-A", "其他列-B", "其他列-C"])
+    assert logic._resolve_close_cols(headers, "-") is None
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
