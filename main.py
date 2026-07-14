@@ -83,6 +83,12 @@ try:
 except Exception as e:  # noqa: BLE001
     print(f"[warn] 跳过 features.word_text_replacer: {e}", file=sys.stderr)
 
+try:
+    from features.inventory_table_cleaner.inventory_table_cleaner_ui import InventoryTableCleanerFeature
+    FEATURES.append(InventoryTableCleanerFeature())
+except Exception as e:  # noqa: BLE001
+    print(f"[warn] 跳过 features.inventory_table_cleaner: {e}", file=sys.stderr)
+
 
 def main() -> int:
     _install_crash_logger()
