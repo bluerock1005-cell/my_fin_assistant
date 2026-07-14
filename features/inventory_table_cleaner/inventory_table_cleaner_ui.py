@@ -144,9 +144,9 @@ class InventoryTableCleanerWidget(QWidget):
         desc = QLabel(
             "通过本机 Microsoft Excel（COM 自动化）清洗存货收发存汇总表的 3 层合并表头："
             "删除标题行、取消合并、把分组名与「数量/单价/金额」结合成完整字段名，"
-            "输出干净的单层表头。还支持「按会计期间归并」：保留指定期初/期末期间的余额，"
-            "删除其余期间的余额与中间流转列。原文件不会被修改，结果另存为新文件。"
-            "需 Windows 且已安装 Excel。",
+            "输出干净的单层表头。还支持「按会计期间保留」：仅保留指定期初/期末期间的余额数据，"
+            "其余期间的期初结存/期末结存数据单元格会被清空（列保留不动），中间流转列也整列保留。"
+            "原文件不会被修改，结果另存为新文件。需 Windows 且已安装 Excel。",
             self,
         )
         desc.setObjectName("pageDesc")
@@ -171,7 +171,7 @@ class InventoryTableCleanerWidget(QWidget):
         h_top.addWidget(h_lbl)
         h_top.addStretch(1)
 
-        btn_add = QPushButton("选择文件", card1)
+        btn_add = QPushButton("+ 添加文件", card1)
         btn_add.setObjectName("primary")
         btn_add.setFixedHeight(34)
         btn_add.setMinimumWidth(120)
@@ -446,8 +446,8 @@ class InventoryTableCleanerWidget(QWidget):
         self._load_preview(result.output_path, result.header_mode, result.headers)
         self._btn_open.setEnabled(True)
         msg = f"✅ 完成：共 {result.header_count} 列表头，{result.data_rows} 行数据。"
-        if result.deleted_columns:
-            msg += f" 已按会计期间归并，删除 {result.deleted_columns} 列。"
+        if result.cleared_columns:
+            msg += f" 已清空 {result.cleared_columns} 列非保留期间余额数据（列保留不动）。"
         if result.deleted_rows:
             msg += f" 已删除 {result.deleted_rows} 行合计/总计行。"
         self._log_line(msg)
@@ -455,8 +455,8 @@ class InventoryTableCleanerWidget(QWidget):
             f"输出文件：{result.output_path.name}\n"
             f"表头 {result.header_count} 列，数据 {result.data_rows} 行。"
         )
-        if result.deleted_columns:
-            detail += f"\n已删除 {result.deleted_columns} 列（保留所选期初/期末期间余额）。"
+        if result.cleared_columns:
+            detail += f"\n已清空 {result.cleared_columns} 列非保留期间余额数据（列保留不动，仅清除数据）。"
         if result.deleted_rows:
             detail += f"\n已删除 {result.deleted_rows} 行合计/总计汇总行。"
         utils.info("处理完成", detail, parent=self)
