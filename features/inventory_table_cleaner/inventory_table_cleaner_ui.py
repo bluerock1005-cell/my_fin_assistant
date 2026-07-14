@@ -144,7 +144,8 @@ class InventoryTableCleanerWidget(QWidget):
         desc = QLabel(
             "通过本机 Microsoft Excel（COM 自动化）清洗存货收发存汇总表的 3 层合并表头："
             "删除标题行、取消合并、把分组名与「数量/单价/金额」结合成完整字段名，"
-            "输出干净的单层表头。原文件不会被修改，结果另存为新文件。"
+            "输出干净的单层表头。还支持「按会计期间归并」：保留指定期初/期末期间的余额，"
+            "删除其余期间的余额与中间流转列。原文件不会被修改，结果另存为新文件。"
             "需 Windows 且已安装 Excel。",
             self,
         )
@@ -224,6 +225,33 @@ class InventoryTableCleanerWidget(QWidget):
 
         param_row.addStretch(1)
         c1.addLayout(param_row)
+
+        # 参数行2：按会计期间归并（保留期初/期末期间）
+        period_row = QHBoxLayout()
+        period_row.setSpacing(theme.SPACING[16])
+
+        po_label = QLabel("保留期初会计期间:", card1)
+        period_row.addWidget(po_label)
+        self._edit_keep_open = QLineEdit(card1)
+        self._edit_keep_open.setFixedWidth(64)
+        self._edit_keep_open.setFixedHeight(30)
+        self._edit_keep_open.setPlaceholderText("留空=不筛")
+        period_row.addWidget(self._edit_keep_open)
+
+        pc_label = QLabel("保留期末会计期间:", card1)
+        period_row.addWidget(pc_label)
+        self._edit_keep_close = QLineEdit(card1)
+        self._edit_keep_close.setFixedWidth(64)
+        self._edit_keep_close.setFixedHeight(30)
+        self._edit_keep_close.setPlaceholderText("留空=不筛")
+        period_row.addWidget(self._edit_keep_close)
+
+        period_row.addStretch(1)
+        po_label.setToolTip("仅保留该会计期间的期初结存 3 列（如期初期间=1）。"
+                            "留空表示不筛选、保留全部期初结存。")
+        pc_label.setToolTip("仅保留该会计期间的期末结存 3 列（如期末期间=6）。"
+                            "留空表示不筛选、保留全部期末结存。")
+        c1.addLayout(period_row)
 
         root.addWidget(card1)
 
@@ -321,6 +349,17 @@ class InventoryTableCleanerWidget(QWidget):
     def _ts(self) -> str:
         return datetime.now().strftime("%H:%M:%S")
 
+    @staticmethod
+    def _parse_int(text: str) -> int | None:
+        """把输入框文本解析为整数；空或非法时返回 None（表示不筛选）。"""
+        s = (text or "").strip()
+        if not s:
+            return None
+        try:
+            return int(s)
+        except ValueError:
+            return None
+
     def _log_line(self, msg: str) -> None:
         self._log.appendPlainText(f"[{self._ts()}] {msg}")
 
@@ -348,13 +387,19 @@ class InventoryTableCleanerWidget(QWidget):
 
         header_mode = "double" if self._radio_double.isChecked() else "single"
         sep = self._edit_sep.text() or "-"
+        keep_open = self._parse_int(self._edit_keep_open.text())
+        keep_close = self._parse_int(self._edit_keep_close.text())
 
         self._btn_run.setEnabled(False)
         self._progress.setText("正在处理…")
         self._model.clear()
         self._btn_open.setEnabled(False)
         self._log.clear()
-        self._log_line(f"开始清洗（表头模式：{header_mode}，分隔符：{sep!r}）…")
+        period_desc = ""
+        if keep_open is not None or keep_close is not None:
+            period_desc = (f"，期初期间={keep_open}，期末期间={keep_close}")
+        self._log_line(
+            f"开始清洗（表头模式：{header_mode}，分隔符：{sep!r}{period_desc}）…")
 
         self._log_queue = Queue()
         self._future = self._executor.submit(
@@ -364,6 +409,8 @@ class InventoryTableCleanerWidget(QWidget):
             header_mode,
             sep,
             self._log_queue.put,
+            keep_open,
+            keep_close,
         )
 
         def _check() -> None:
@@ -398,15 +445,17 @@ class InventoryTableCleanerWidget(QWidget):
         self._progress.setText("")
         self._load_preview(result.output_path, result.header_mode, result.headers)
         self._btn_open.setEnabled(True)
-        self._log_line(
-            f"✅ 完成：共 {result.header_count} 列表头，{result.data_rows} 行数据。"
-        )
-        utils.info(
-            "处理完成",
+        msg = f"✅ 完成：共 {result.header_count} 列表头，{result.data_rows} 行数据。"
+        if result.deleted_columns:
+            msg += f" 已按会计期间归并，删除 {result.deleted_columns} 列。"
+        self._log_line(msg)
+        detail = (
             f"输出文件：{result.output_path.name}\n"
-            f"表头 {result.header_count} 列，数据 {result.data_rows} 行。",
-            parent=self,
+            f"表头 {result.header_count} 列，数据 {result.data_rows} 行。"
         )
+        if result.deleted_columns:
+            detail += f"\n已删除 {result.deleted_columns} 列（保留所选期初/期末期间余额）。"
+        utils.info("处理完成", detail, parent=self)
 
     def _on_fail(self, err: str) -> None:
         while not self._log_queue.empty():
