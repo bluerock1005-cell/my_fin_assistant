@@ -15,6 +15,9 @@ UI 与逻辑严格分离：本文件只管界面与交互，表头清洗放在 i
 from __future__ import annotations
 
 import concurrent.futures
+import shutil
+import tempfile
+import uuid
 from datetime import datetime
 from pathlib import Path
 from queue import Queue
@@ -106,9 +109,11 @@ class InventoryTableCleanerWidget(QWidget):
 
     工作流：
       1. 拖拽 / 选择源 Excel（.xlsx）
-      2. 选择表头模式（单层/双层）与层级分隔符
-      3. 点击「开始处理」→ 后台通过 Excel COM 清洗表头
-      4. 在日志面板查看进度，并在结果预览表中核对（前 200 行）
+      2. 选择表头模式（单层/双层）与层级分隔符、按会计期间保留参数
+      3. 点击「开始处理」→ 后台通过 Excel COM 清洗表头，结果先写入临时工作文件并展示预览
+      4. 在日志面板查看进度，在结果预览表中核对（前 200 行）
+      5. 点击「导出 Excel」→ 选择保存位置，把清洗结果另存为最终文件
+         （与 features/notes_receivable_import 的「导出 Excel」按钮一致：处理不落盘，导出才保存）
     """
 
     _PREVIEW_MAX_ROWS = 200
@@ -120,6 +125,8 @@ class InventoryTableCleanerWidget(QWidget):
         # 状态
         self._input_file: Path | None = None
         self._output_file: Path | None = None
+        # 清洗结果先写入的临时工作文件（导出时才由用户另存为最终文件）
+        self._working_file: Path | None = None
 
         # 后台线程
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
@@ -272,6 +279,13 @@ class InventoryTableCleanerWidget(QWidget):
         self._lbl_row_count.setObjectName("pageDesc")
         p_head.addWidget(self._lbl_row_count)
         p_head.addStretch(1)
+        self._btn_export = QPushButton("导出 Excel", card2)
+        self._btn_export.setObjectName("primary")
+        self._btn_export.setFixedHeight(34)
+        self._btn_export.setMinimumWidth(120)
+        self._btn_export.setEnabled(False)
+        self._btn_export.clicked.connect(self._do_export)
+        p_head.addWidget(self._btn_export)
         self._btn_open = QPushButton("打开输出文件", card2)
         self._btn_open.setObjectName("primary")
         self._btn_open.setFixedHeight(34)
@@ -331,18 +345,17 @@ class InventoryTableCleanerWidget(QWidget):
 
     def _choose_input(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "选择源 Excel", str(Path.home()), "Excel 文件 (*.xlsx *.xlsm *.xls)")
+            self, "选择源 Excel", str(app_config.get_last_dir("inventory_input")),
+            "Excel 文件 (*.xlsx *.xlsm *.xls)")
         if path:
+            app_config.set_last_dir("inventory_input", path)
             self._set_input(Path(path))
 
     def _set_input(self, path: Path) -> None:
         self._input_file = path
         self._lbl_file.setText(f"已选择：{path}")
         self._log_line(f"已选择源文件：{path}")
-        if self._output_file is None:
-            out = path.parent / f"{path.stem}_清洗.xlsx"
-            self._output_file = out
-            self._log_line(f"默认输出文件：{out}")
+        # 最终保存位置由「导出 Excel」时用户选择；此处仅记录源文件
 
     # ====== 日志 ======
 
@@ -365,15 +378,30 @@ class InventoryTableCleanerWidget(QWidget):
 
     # ====== 清除 ======
 
+    def _cleanup_working(self) -> None:
+        """删除临时工作文件（若存在）。"""
+        if self._working_file is not None and self._working_file.exists():
+            try:
+                self._working_file.unlink()
+            except Exception:
+                pass
+        self._working_file = None
+
+    def _make_working_path(self) -> Path:
+        """生成本次清洗的临时工作文件路径（位于系统临时目录，导出后由用户另存）。"""
+        return Path(tempfile.gettempdir()) / f"inventory_clean_{uuid.uuid4().hex}.xlsx"
+
     def _clear(self) -> None:
         self._input_file = None
         self._output_file = None
+        self._cleanup_working()
         self._model.clear()
         self._lbl_file.setText("未选择文件")
         self._lbl_row_count.setText("")
         self._log.clear()
         self._progress.setText("")
         self._btn_open.setEnabled(False)
+        self._btn_export.setEnabled(False)
         self._log_line("已清除。")
 
     # ====== 开始处理 ======
@@ -382,30 +410,35 @@ class InventoryTableCleanerWidget(QWidget):
         if self._input_file is None or not self._input_file.exists():
             utils.warn("提示", "请先选择源 Excel 文件。", parent=self)
             return
-        if self._output_file is None:
-            self._output_file = self._input_file.parent / f"{self._input_file.stem}_清洗.xlsx"
 
         header_mode = "double" if self._radio_double.isChecked() else "single"
         sep = self._edit_sep.text() or "-"
         keep_open = self._parse_int(self._edit_keep_open.text())
         keep_close = self._parse_int(self._edit_keep_close.text())
 
+        # 清洗结果先写入临时工作文件；最终保存位置由「导出 Excel」时用户选择
+        self._cleanup_working()
+        self._working_file = self._make_working_path()
+
         self._btn_run.setEnabled(False)
+        self._btn_export.setEnabled(False)
+        self._btn_open.setEnabled(False)
         self._progress.setText("正在处理…")
         self._model.clear()
-        self._btn_open.setEnabled(False)
+        self._output_file = None
         self._log.clear()
         period_desc = ""
         if keep_open is not None or keep_close is not None:
             period_desc = (f"，期初期间={keep_open}，期末期间={keep_close}")
         self._log_line(
             f"开始清洗（表头模式：{header_mode}，分隔符：{sep!r}{period_desc}）…")
+        self._log_line("清洗结果将先生成在临时工作文件，核对后请点击「导出 Excel」保存。")
 
         self._log_queue = Queue()
         self._future = self._executor.submit(
             _logic.process_inventory,
             self._input_file,
-            self._output_file,
+            self._working_file,
             header_mode,
             sep,
             self._log_queue.put,
@@ -444,22 +477,25 @@ class InventoryTableCleanerWidget(QWidget):
         self._btn_run.setEnabled(True)
         self._progress.setText("")
         self._load_preview(result.output_path, result.header_mode, result.headers)
-        self._btn_open.setEnabled(True)
-        msg = f"✅ 完成：共 {result.header_count} 列表头，{result.data_rows} 行数据。"
+        # 处理完成但尚末落盘：启用「导出 Excel」，待用户选择保存位置后才启用「打开输出文件」
+        self._btn_export.setEnabled(True)
+        self._btn_open.setEnabled(False)
+        msg = f"✅ 清洗完成：共 {result.header_count} 列表头，{result.data_rows} 行数据。"
         if result.cleared_columns:
             msg += f" 已清空 {result.cleared_columns} 列非保留期间余额数据（列保留不动）。"
         if result.deleted_rows:
             msg += f" 已删除 {result.deleted_rows} 行合计/总计行。"
         self._log_line(msg)
+        self._log_line("请在预览中核对；确认无误后点击「导出 Excel」选择保存位置。")
         detail = (
-            f"输出文件：{result.output_path.name}\n"
-            f"表头 {result.header_count} 列，数据 {result.data_rows} 行。"
+            f"表头 {result.header_count} 列，数据 {result.data_rows} 行。\n"
+            f"清洗结果已生成，请在预览核对后点击「导出 Excel」保存到本地。"
         )
         if result.cleared_columns:
             detail += f"\n已清空 {result.cleared_columns} 列非保留期间余额数据（列保留不动，仅清除数据）。"
         if result.deleted_rows:
             detail += f"\n已删除 {result.deleted_rows} 行合计/总计汇总行。"
-        utils.info("处理完成", detail, parent=self)
+        utils.info("清洗完成", detail, parent=self)
 
     def _on_fail(self, err: str) -> None:
         while not self._log_queue.empty():
@@ -471,6 +507,42 @@ class InventoryTableCleanerWidget(QWidget):
         self._progress.setText("")
         self._log_line(f"❌ 处理失败：{err}")
         utils.error("处理失败", f"清洗时出错：{err}", parent=self)
+
+    # ====== 导出（另存为用户选定位置）======
+
+    def _do_export(self) -> None:
+        """把清洗结果（临时工作文件）另存为用户选定的最终文件。
+
+        与 features/notes_receivable_import 的「导出 Excel」一致：处理阶段只生成
+        临时结果用于预览，点击此处才真正写盘到用户选择的位置。
+        """
+        if self._working_file is None or not self._working_file.exists():
+            utils.warn("提示", "请先点击「开始处理」生成清洗结果，再导出。", parent=self)
+            return
+        src = self._input_file
+        default_name = f"{src.stem}_清洗.xlsx" if src else "存货表清洗.xlsx"
+        default_dir = str(src.parent) if src else str(Path.home())
+        out_path, _ = QFileDialog.getSaveFileName(
+            self, "导出清洗结果", str(Path(default_dir) / default_name),
+            "Excel 文件 (*.xlsx)")
+        if not out_path:
+            return
+        if not out_path.lower().endswith(".xlsx"):
+            out_path += ".xlsx"
+        try:
+            shutil.copy(self._working_file, out_path)
+        except Exception as e:  # noqa: BLE001
+            self._log_line(f"❌ 导出失败：{e}")
+            utils.error("导出失败", f"保存 Excel 时出错：{e}", parent=self)
+            return
+        self._output_file = Path(out_path)
+        try:
+            app_config.set_last_dir("inventory_output", out_path)
+        except Exception:
+            pass
+        self._btn_open.setEnabled(True)
+        self._log_line(f"✅ 已导出 → {out_path}")
+        utils.info("导出完成", f"已保存：{out_path}", parent=self)
 
     # ====== 预览 ======
 
