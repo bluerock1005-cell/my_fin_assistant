@@ -14,6 +14,7 @@
   2) 取消第 3~5 行合并单元格（先按合并区域把标签填充到每个单元格，再 UnMerge，保留层级信息）
   3) 把分组名与 数量/单价/金额 等逐层结合成完整字段名（如期初结存-数量、本期收入-采购类-数量）
   4) 删除多余的中间/底行，得到单层（或双层）干净表头
+  5) 删除数据区的「合计/总计」汇总行（通常为数据区最后一行）
 
 为什么用 COM 而非 openpyxl：COM 由 Excel 自身执行删除/取消合并/保存，**完整保留原有
 数字格式、列宽、字体等样式**，且不触发 openpyxl 重写带来的样式丢失。
@@ -236,6 +237,7 @@ class CleanResult:
     error: str | None = None
     log_lines: list[str] = field(default_factory=list)
     deleted_columns: int = 0
+    deleted_rows: int = 0
 
 
 def process_inventory(
@@ -380,6 +382,21 @@ def process_inventory(
                 ws.Rows(3).Delete()
                 header_rows = 2
 
+            # 步骤 4b：删除数据区的「合计/总计」汇总行（通常为数据区最后一行）
+            # 识别方式：扫描数据区第 1 列，凡含「合计」/「总计」的行即删除（从下往上删避免偏移）。
+            _log("步骤4b：删除数据区合计/总计行")
+            deleted_rows = 0
+            data_start = header_rows + 1
+            last_data_row = int(ws.UsedRange.Rows.Count)
+            for r in range(last_data_row, data_start - 1, -1):
+                a_val = _as_text(ws.Cells(r, 1).Value)
+                if a_val and ("合计" in a_val or "总计" in a_val):
+                    ws.Rows(r).Delete()
+                    deleted_rows += 1
+                    _log(f"  已删除合计行（原第 {r} 行）")
+            if deleted_rows:
+                _log(f"✂ 共删除 {deleted_rows} 行合计/总计行")
+
             # === 步骤5：按会计期间归并（新增需求）===
             deleted_count = 0
             if keep_open_period is not None or keep_close_period is not None:
@@ -403,10 +420,14 @@ def process_inventory(
             _log(f"保存结果：{out_p.name}")
             wb.SaveAs(str(out_p), FileFormat=_XL_FILE_FORMAT_XLSX)
 
-            _log(
-                f"✅ 完成：共 {final_maxcol} 列表头，{data_rows} 行数据"
-                + (f"，已删除 {deleted_count} 列。" if deleted_count else "。")
-            )
+            summary = f"✅ 完成：共 {final_maxcol} 列表头，{data_rows} 行数据"
+            extra = []
+            if deleted_rows:
+                extra.append(f"删除 {deleted_rows} 行合计/总计")
+            if deleted_count:
+                extra.append(f"删除 {deleted_count} 列")
+            summary += ("；" + "、".join(extra) + "。") if extra else "。"
+            _log(summary)
             return CleanResult(
                 input_path=in_p,
                 output_path=out_p,
@@ -416,6 +437,7 @@ def process_inventory(
                 data_rows=data_rows,
                 ok=True,
                 deleted_columns=deleted_count,
+                deleted_rows=deleted_rows,
                 log_lines=[],
             )
         finally:

@@ -448,6 +448,8 @@ class InventoryTableCleanerWidget(QWidget):
         msg = f"✅ 完成：共 {result.header_count} 列表头，{result.data_rows} 行数据。"
         if result.deleted_columns:
             msg += f" 已按会计期间归并，删除 {result.deleted_columns} 列。"
+        if result.deleted_rows:
+            msg += f" 已删除 {result.deleted_rows} 行合计/总计行。"
         self._log_line(msg)
         detail = (
             f"输出文件：{result.output_path.name}\n"
@@ -455,6 +457,8 @@ class InventoryTableCleanerWidget(QWidget):
         )
         if result.deleted_columns:
             detail += f"\n已删除 {result.deleted_columns} 列（保留所选期初/期末期间余额）。"
+        if result.deleted_rows:
+            detail += f"\n已删除 {result.deleted_rows} 行合计/总计汇总行。"
         utils.info("处理完成", detail, parent=self)
 
     def _on_fail(self, err: str) -> None:
