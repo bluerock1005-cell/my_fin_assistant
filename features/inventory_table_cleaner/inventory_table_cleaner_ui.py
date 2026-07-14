@@ -34,6 +34,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
+    QComboBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -151,8 +152,9 @@ class InventoryTableCleanerWidget(QWidget):
         desc = QLabel(
             "通过本机 Microsoft Excel（COM 自动化）清洗存货收发存汇总表的 3 层合并表头："
             "删除标题行、取消合并、把分组名与「数量/单价/金额」结合成完整字段名，"
-            "输出干净的单层表头。还支持「按会计期间保留」：仅保留指定期初/期末期间的余额数据，"
-            "其余期间的期初结存/期末结存数据单元格会被清空（列保留不动），中间流转列也整列保留。"
+            "输出干净的单层表头。还支持「按会计期间保留」：从源文件 B 列（会计期间）"
+            "读取可选项填入下拉框，仅保留选定期初/期末期间的余额数据，"
+            "其余期间的期初结存/期末结存数据单元格会被清空（按行判断，列保留不动），中间流转列也整列保留。"
             "原文件不会被修改，结果另存为新文件。需 Windows 且已安装 Excel。",
             self,
         )
@@ -233,31 +235,33 @@ class InventoryTableCleanerWidget(QWidget):
         param_row.addStretch(1)
         c1.addLayout(param_row)
 
-        # 参数行2：按会计期间归并（保留期初/期末期间）
+        # 参数行2：按会计期间归并（保留期初/期末期间）——下拉框，选项来自源文件 B 列
         period_row = QHBoxLayout()
         period_row.setSpacing(theme.SPACING[16])
 
         po_label = QLabel("保留期初会计期间:", card1)
         period_row.addWidget(po_label)
-        self._edit_keep_open = QLineEdit(card1)
-        self._edit_keep_open.setFixedWidth(64)
-        self._edit_keep_open.setFixedHeight(30)
-        self._edit_keep_open.setPlaceholderText("留空=不筛")
-        period_row.addWidget(self._edit_keep_open)
+        self._combo_keep_open = QComboBox(card1)
+        self._combo_keep_open.setMinimumWidth(120)
+        self._combo_keep_open.setFixedHeight(30)
+        self._combo_keep_open.addItem("（不筛选）", None)
+        period_row.addWidget(self._combo_keep_open)
 
         pc_label = QLabel("保留期末会计期间:", card1)
         period_row.addWidget(pc_label)
-        self._edit_keep_close = QLineEdit(card1)
-        self._edit_keep_close.setFixedWidth(64)
-        self._edit_keep_close.setFixedHeight(30)
-        self._edit_keep_close.setPlaceholderText("留空=不筛")
-        period_row.addWidget(self._edit_keep_close)
+        self._combo_keep_close = QComboBox(card1)
+        self._combo_keep_close.setMinimumWidth(120)
+        self._combo_keep_close.setFixedHeight(30)
+        self._combo_keep_close.addItem("（不筛选）", None)
+        period_row.addWidget(self._combo_keep_close)
 
         period_row.addStretch(1)
-        po_label.setToolTip("仅保留该会计期间的期初结存 3 列（如期初期间=1）。"
-                            "留空表示不筛选、保留全部期初结存。")
-        pc_label.setToolTip("仅保留该会计期间的期末结存 3 列（如期末期间=6）。"
-                            "留空表示不筛选、保留全部期末结存。")
+        po_label.setToolTip("仅保留该会计期间的期初结存 3 列数据（如期初期间=01）。"
+                            "选项由源文件 B 列（会计期间）读取，显示如「01月」、内部值仍为「01」。"
+                            "不选表示不筛选、保留全部期初结存。")
+        pc_label.setToolTip("仅保留该会计期间的期末结存 3 列数据（如期末期间=06）。"
+                            "选项由源文件 B 列（会计期间）读取，显示如「06月」、内部值仍为「06」。"
+                            "不选表示不筛选、保留全部期末结存。")
         c1.addLayout(period_row)
 
         root.addWidget(card1)
@@ -355,6 +359,8 @@ class InventoryTableCleanerWidget(QWidget):
         self._input_file = path
         self._lbl_file.setText(f"已选择：{path}")
         self._log_line(f"已选择源文件：{path}")
+        # 读取源文件 B 列（会计期间）填充下拉框
+        self._load_period_options(path)
         # 最终保存位置由「导出 Excel」时用户选择；此处仅记录源文件
 
     # ====== 日志 ======
@@ -362,16 +368,32 @@ class InventoryTableCleanerWidget(QWidget):
     def _ts(self) -> str:
         return datetime.now().strftime("%H:%M:%S")
 
-    @staticmethod
-    def _parse_int(text: str) -> int | None:
-        """把输入框文本解析为整数；空或非法时返回 None（表示不筛选）。"""
-        s = (text or "").strip()
-        if not s:
-            return None
+    def _load_period_options(self, path: Path) -> None:
+        """读取源文件 B 列（会计期间），去重排序后填充两个下拉框。
+
+        下拉项：显示文本为「01月」「02月」…（更直观），内部 userData 保留原始的
+        零填充字符串「01」「02」…，方便直接传给清洗逻辑做期号匹配。
+        第 0 项固定为「（不筛选）」，对应内部值 None。
+        """
+        # 先重置为「不筛选」
+        self._combo_keep_open.clear()
+        self._combo_keep_open.addItem("（不筛选）", None)
+        self._combo_keep_close.clear()
+        self._combo_keep_close.addItem("（不筛选）", None)
         try:
-            return int(s)
-        except ValueError:
-            return None
+            periods = _logic.read_accounting_periods(path)
+        except Exception as e:  # noqa: BLE001
+            self._log_line(f"⚠ 读取会计期间（B 列）失败：{e}")
+            return
+        if not periods:
+            self._log_line("⚠ 未在源文件 B 列（会计期间）中读到任何期间，下拉框仅提供「不筛选」。")
+            return
+        for v in periods:
+            self._combo_keep_open.addItem(f"{v}月", v)
+            self._combo_keep_close.addItem(f"{v}月", v)
+        self._log_line(
+            f"已从 B 列读取会计期间 {len(periods)} 个：{', '.join(periods)}"
+            f"（显示「NN月」，内部值保留「NN」）")
 
     def _log_line(self, msg: str) -> None:
         self._log.appendPlainText(f"[{self._ts()}] {msg}")
@@ -402,6 +424,8 @@ class InventoryTableCleanerWidget(QWidget):
         self._progress.setText("")
         self._btn_open.setEnabled(False)
         self._btn_export.setEnabled(False)
+        self._combo_keep_open.setCurrentIndex(0)
+        self._combo_keep_close.setCurrentIndex(0)
         self._log_line("已清除。")
 
     # ====== 开始处理 ======
@@ -413,8 +437,9 @@ class InventoryTableCleanerWidget(QWidget):
 
         header_mode = "double" if self._radio_double.isChecked() else "single"
         sep = self._edit_sep.text() or "-"
-        keep_open = self._parse_int(self._edit_keep_open.text())
-        keep_close = self._parse_int(self._edit_keep_close.text())
+        # 会计期间来自下拉框：内部值为零填充字符串（"01"），未选择则为 None（不筛选）
+        keep_open = self._combo_keep_open.currentData()
+        keep_close = self._combo_keep_close.currentData()
 
         # 清洗结果先写入临时工作文件；最终保存位置由「导出 Excel」时用户选择
         self._cleanup_working()
@@ -481,8 +506,8 @@ class InventoryTableCleanerWidget(QWidget):
         self._btn_export.setEnabled(True)
         self._btn_open.setEnabled(False)
         msg = f"✅ 清洗完成：共 {result.header_count} 列表头，{result.data_rows} 行数据。"
-        if result.cleared_columns:
-            msg += f" 已清空 {result.cleared_columns} 列非保留期间余额数据（列保留不动）。"
+        if result.cleared_cells:
+            msg += f" 已清空 {result.cleared_cells} 个非保留期间余额单元格（按行判断，列保留不动）。"
         if result.deleted_rows:
             msg += f" 已删除 {result.deleted_rows} 行合计/总计行。"
         self._log_line(msg)
@@ -491,8 +516,8 @@ class InventoryTableCleanerWidget(QWidget):
             f"表头 {result.header_count} 列，数据 {result.data_rows} 行。\n"
             f"清洗结果已生成，请在预览核对后点击「导出 Excel」保存到本地。"
         )
-        if result.cleared_columns:
-            detail += f"\n已清空 {result.cleared_columns} 列非保留期间余额数据（列保留不动，仅清除数据）。"
+        if result.cleared_cells:
+            detail += f"\n已清空 {result.cleared_cells} 个非保留期间余额单元格（按行判断，列保留不动，仅清除数据）。"
         if result.deleted_rows:
             detail += f"\n已删除 {result.deleted_rows} 行合计/总计汇总行。"
         utils.info("清洗完成", detail, parent=self)

@@ -119,108 +119,159 @@ def _as_text(value) -> str:
     return str(value).strip()
 
 
-def _detect_period_range(title_text: str) -> tuple[int, int]:
-    """从标题行解析会计期间范围（如 '会计期间：2026年01期 - 2026年06期' → (1, 6)）。
+def read_accounting_periods(input_path: str | Path) -> list[str]:
+    """读取源 Excel B 列（会计期间），去重 + 排序后返回期间字符串列表。
 
-    仅匹配紧跟「期」字的数字（如 '01期'），自动跳过年份 '2026' 之类。
+    返回值示例：``["01", "02", "03", "04", "05", "06"]``。
+
+    内部值保留原始的零填充字符串（如 ``"01"``），方便与清洗后表头中嵌入的期号
+    （如「期初结存-01-数量」里的 ``"01"``）直接做字符串匹配。
+
+    处理要点：
+      - 只取「纯数字串」单元格（如 ``"01"``），自动跳过标题行 / 表头标签行
+        （这些单元格是长文本或「会计期间」字样，不匹配纯数字模式）；
+      - 兼容合并单元格：数据区 B 列可能被标题行的合并区域覆盖，通过合并区域
+        锚点值回填，确保合并单元格也能读到正确期间；
+      - 归一化为 2 位零填充字符串（``"1"`` -> ``"01"``，``"01"`` -> ``"01"``），
+        保证与下游表头期号一致。
     """
-    matches = re.findall(r"(\d+)\s*期", title_text or "")
-    nums: list[int] = []
-    for m in matches:
-        try:
-            nums.append(int(m))
-        except ValueError:
-            pass
-    if nums:
-        return min(nums), max(nums)
-    return 1, 1
+    from openpyxl import load_workbook
+
+    p = Path(input_path).resolve()
+    if not p.exists():
+        raise FileNotFoundError(f"源文件不存在：{p}")
+
+    wb = load_workbook(p, data_only=True)
+    try:
+        ws = wb.active
+        # 建立合并单元格锚点值映射（仅关心 B 列，列号 2）
+        anchor: dict[tuple[int, int], str] = {}
+        for rng in list(ws.merged_cells.ranges):
+            if not (rng.min_col <= 2 <= rng.max_col):
+                continue
+            val = ws.cell(rng.min_row, rng.min_col).value
+            sval = "" if val is None else str(val).strip()
+            for r in range(rng.min_row, rng.max_row + 1):
+                for c in range(rng.min_col, rng.max_col + 1):
+                    anchor[(r, c)] = sval
+
+        seen: set[str] = set()
+        out: list[str] = []
+        for r in range(1, ws.max_row + 1):
+            if (r, 2) in anchor:
+                s = anchor[(r, 2)]
+            else:
+                v = ws.cell(r, 2).value
+                s = "" if v is None else str(v).strip()
+            # 仅保留纯数字串（会计期间，如 "01"）；跳过标题 / 表头标签
+            if not s or not re.fullmatch(r"\d{1,3}", s):
+                continue
+            norm = f"{int(s):02d}"
+            if norm not in seen:
+                seen.add(norm)
+                out.append(norm)
+        out.sort(key=lambda x: int(x))
+        return out
+    finally:
+        wb.close()
 
 
-def _classify_header(hdr: str) -> tuple[str, int | None]:
-    """把合并后的表头归类，并返回其会计期间（若能识别）。
+def _find_col_index(headers: list[str], target: str) -> int | None:
+    """在扁平表头中查找目标字段，返回 1-based Excel 列号；未找到返回 None。"""
+    for i, h in enumerate(headers):
+        if h == target:
+            return i + 1
+    return None
 
-    返回 (group, period)：
-      - ("open",  p) 期初结存-*   （累计表无期号时 period=None，视作起始期）
-      - ("close", p) 期末结存-*
-      - ("income",p) 本期收入-*
-      - ("issue", p) 本期发出-*
-      - ("fixed",None) 其余固定列（会计年度/物料编号…）
+
+def _find_period_cols(headers: list[str], base: str, sep: str) -> list[int] | None:
+    """查找 base-数量/单价/金额 三列，返回 1-based 列号列表；缺任一列返回 None。"""
+    cols: list[int] = []
+    for suffix in ("数量", "单价", "金额"):
+        idx = _find_col_index(headers, f"{base}{sep}{suffix}")
+        if idx is None:
+            return None
+        cols.append(idx)
+    return cols
+
+
+def _find_open_cols(headers: list[str], sep: str) -> list[int] | None:
+    """查找期初结存-数量/单价/金额三列。"""
+    return _find_period_cols(headers, "期初结存", sep)
+
+
+def _find_close_cols(headers: list[str], sep: str) -> list[int] | None:
+    """查找期末结存/本期结存-数量/单价/金额三列（优先期末结存，其次本期结存）。"""
+    for base in ("期末结存", "本期结存"):
+        cols = _find_period_cols(headers, base, sep)
+        if cols is not None:
+            return cols
+    return None
+
+
+def _clear_non_kept_period_rows(
+    ws,
+    headers: list[str],
+    header_rows: int,
+    keep_open: str | None,
+    keep_close: str | None,
+    sep: str,
+    log,
+) -> int:
+    """按行清空非保留期间的期初/期末结存数据单元格（列保留不动）。
+
+    与需求一致的两步：
+      1. 定位要清空的行：遍历数据区，读取该行的「会计期间」列；
+         若等于保留期间则跳过，否则该行即为目标行。
+      2. 清空目标行的余额单元格：把该行「期初结存-数量/单价/金额」
+         （以及「期末结存/本期结存-数量/单价/金额」）三格清空。
+    本期收入 / 本期发出 / 固定列完全不动。
+
+    keep_open/keep_close 为归一化的 2 位零填充字符串（如 "01"），None 表示不筛选。
+    返回被清空的数据单元格总数。
     """
-    h = hdr or ""
-    # 期号识别：优先「X期」；其次列名中首个数字串（多期间明细文件如「期初结存-02-数量」
-    # 不含「期」字，但仍需识别期间）。仅对期初/期末余额组生效，income/issue/fixed 组
-    # 不参与按期间清空，是否提取期号无副作用。
-    m = re.search(r"(\d+)\s*期", h)
-    if not m:
-        m = re.search(r"(\d{1,2})", h)
-    period = int(m.group(1)) if m else None
-    if h.startswith("期初结存"):
-        return "open", period
-    # 期末结存 / 本期结存 都视作「期末（本期）结存」余额组
-    if h.startswith("期末结存") or h.startswith("本期结存"):
-        return "close", period
-    if h.startswith("本期收入"):
-        return "income", period
-    if h.startswith("本期发出"):
-        return "issue", period
-    return "fixed", None
+    period_col = _find_col_index(headers, "会计期间")
+    if period_col is None:
+        log("⚠ 未找到「会计期间」列，无法按行清空期间数据")
+        return 0
 
+    open_cols = _find_open_cols(headers, sep)
+    close_cols = _find_close_cols(headers, sep)
 
-def _clear_non_kept_period_cells(ws, combined, title_text, keep_open, keep_close,
-                                 header_rows, log) -> int:
-    """按保留的期初/期末会计期间，清空其余期间余额数据单元格（列保留不动）。
+    if keep_open is None and keep_close is None:
+        return 0
+    if keep_open is not None and open_cols is None:
+        log("⚠ 未找到「期初结存」数量/单价/金额列，跳过期初清空")
+    if keep_close is not None and close_cols is None:
+        log("⚠ 未找到「期末结存/本期结存」数量/单价/金额列，跳过期末清空")
 
-    与早期「删列」实现不同，本函数**不删除任何列**，仅清空数据行中属于非保留期间的
-    期初结存 / 期末结存（数量/单价/金额）单元格，避免破坏表格列结构。
-
-    规则（与需求一致）：
-      - 保留「保留期初会计期间」对应的期初结存 3 列数据，清空其他期间的期初结存数据；
-      - 保留「保留期末会计期间」对应的期末结存 3 列数据，清空其他期间的期末结存数据；
-      - 期初/期末列中无期号者，视作标题会计期间范围的起始期（期初）/期末期（期末）；
-      - 本期收入 / 本期发出 及固定列不参与，整列保留（列不动）。
-    返回被清空数据的列数。
-    """
-    p_start, p_end = _detect_period_range(title_text)
-    log(f"检测到会计期间范围：{p_start}期 ~ {p_end}期")
-
-    total_cols = len(combined)
-    last_row = int(ws.UsedRange.Rows.Count)
     first_data_row = header_rows + 1
+    last_row = int(ws.UsedRange.Rows.Count)
     if last_row < first_data_row:
         return 0
 
-    to_clear: list[int] = []
-    for c in range(1, total_cols + 1):
-        hdr = combined[c - 1]
-        if not hdr:
+    cleared = 0
+    for r in range(first_data_row, last_row + 1):
+        val = ws.Cells(r, period_col).Value
+        if val is None:
             continue
-        gtype, period = _classify_header(hdr)
-        if gtype == "open":
-            target = keep_open
-            ref = p_start
-        elif gtype == "close":
-            target = keep_close
-            ref = p_end
-        else:
-            # 本期收入 / 本期发出 / 固定列：不参与按期间清空，列保留
+        period_val = str(val).strip()
+        if not period_val.isdigit():
             continue
-        if target is None:
-            continue
-        # 无期号的余额列视作起始期（期初）/期末期（期末）
-        eff = period if period is not None else ref
-        if eff != target:
-            to_clear.append(c)
+        period_val = f"{int(period_val):02d}"
 
-    if not to_clear:
-        return 0
-    # 清空这些列数据行的单元格内容（列本身保留不动）
-    for c in to_clear:
-        for r in range(first_data_row, last_row + 1):
-            ws.Cells(r, c).ClearContents()
-    log(f"🧹 已清空 {len(to_clear)} 列的非保留期间余额数据（列保留不动）："
-        + "、".join(combined[c - 1] for c in to_clear[:6])
-        + ("…" if len(to_clear) > 6 else ""))
-    return len(to_clear)
+        if keep_open is not None and open_cols is not None and period_val != keep_open:
+            for c in open_cols:
+                ws.Cells(r, c).ClearContents()
+                cleared += 1
+        if keep_close is not None and close_cols is not None and period_val != keep_close:
+            for c in close_cols:
+                ws.Cells(r, c).ClearContents()
+                cleared += 1
+
+    if cleared:
+        log(f"🧹 已清空 {cleared} 个非保留期间余额单元格（按行判断，列保留不动）")
+    return cleared
 
 
 @dataclass
@@ -237,7 +288,7 @@ class CleanResult:
     log_lines: list[str] = field(default_factory=list)
     deleted_columns: int = 0
     deleted_rows: int = 0
-    cleared_columns: int = 0
+    cleared_cells: int = 0
 
 
 def process_inventory(
@@ -246,8 +297,8 @@ def process_inventory(
     header_mode: str = "single",
     sep: str = "-",
     progress_callback: Callable[[str], None] | None = None,
-    keep_open_period: int | None = None,
-    keep_close_period: int | None = None,
+    keep_open_period: str | None = None,
+    keep_close_period: str | None = None,
 ) -> CleanResult:
     """清洗存货收发存汇总表，生成单层（或双层）表头的新 Excel。
 
@@ -258,11 +309,12 @@ def process_inventory(
                      "double" 双层表头（保留分组行 + 合并后的明细行，仅删原第 5 行）。
         sep: 层级结合的分隔符，默认 "-" 。
         progress_callback: 进度日志回调，用于向 UI 回传消息。
-        keep_open_period: 保留的「期初会计期间」（如 1）。非 None 时清空其余期间的
-            期初结存（数量/单价/金额）数据单元格，**列保留不动**；仅保留该期余额数据。
-        keep_close_period: 保留的「期末会计期间」（如 6）。非 None 时清空其余期间的
-            期末结存（列名通常为「期末结存-*」或「本期结存-*」）数据单元格，**列保留不动**。
-            注意：本功能只清空数据、不删除任何列；本期收入/本期发出等流转列也整列保留。
+        keep_open_period: 保留的「期初会计期间」（如 "01"，零填充字符串）。非 None 时按行读取
+            「会计期间」列；不等于该期间的行，其「期初结存-数量/单价/金额」单元格被清空，
+            **列保留不动**；仅保留该期余额数据。
+        keep_close_period: 保留的「期末会计期间」（如 "06"，零填充字符串）。非 None 时按行读取
+            「会计期间」列；不等于该期间的行，其「期末结存/本期结存-数量/单价/金额」单元格
+            被清空，**列保留不动**。本期收入 / 本期发出等流转列完全不动。
 
     Returns:
         CleanResult 汇总对象。
@@ -298,9 +350,6 @@ def process_inventory(
         try:
             # 处理第一个工作表（测试文档为 zy 表）
             ws = wb.Worksheets(1)
-
-            # 捕获标题行（删除前），稍后用于解析会计期间范围
-            title_text = _as_text(ws.Cells(1, 1).Value)
 
             # 最大列（合并/数据都不会超过此范围）
             maxcol = int(ws.UsedRange.Columns.Count)
@@ -397,12 +446,12 @@ def process_inventory(
             if deleted_rows:
                 _log(f"✂ 共删除 {deleted_rows} 行合计/总计行")
 
-            # === 步骤5：按保留的会计期间，清空非保留期间余额数据（列保留不动）===
+            # === 步骤5：按保留的会计期间，按行清空非保留期间余额数据单元格（列保留不动）===
             cleared_count = 0
             if keep_open_period is not None or keep_close_period is not None:
-                cleared_count = _clear_non_kept_period_cells(
-                    ws, combined, title_text,
-                    keep_open_period, keep_close_period, header_rows, _log)
+                cleared_count = _clear_non_kept_period_rows(
+                    ws, combined, header_rows,
+                    keep_open_period, keep_close_period, sep, _log)
 
             # 重新统计最终表头与数据行数（清空数据不改变列/行结构，仍重新读取以确保准确）
             final_maxcol = int(ws.UsedRange.Columns.Count)
@@ -425,7 +474,7 @@ def process_inventory(
             if deleted_rows:
                 extra.append(f"删除 {deleted_rows} 行合计/总计")
             if cleared_count:
-                extra.append(f"清空 {cleared_count} 列非保留期间余额数据（列保留）")
+                extra.append(f"清空 {cleared_count} 个非保留期间余额单元格（按行，列保留）")
             summary += ("；" + "、".join(extra) + "。") if extra else "。"
             _log(summary)
             return CleanResult(
@@ -438,7 +487,7 @@ def process_inventory(
                 ok=True,
                 deleted_columns=0,
                 deleted_rows=deleted_rows,
-                cleared_columns=cleared_count,
+                cleared_cells=cleared_count,
                 log_lines=[],
             )
         finally:
