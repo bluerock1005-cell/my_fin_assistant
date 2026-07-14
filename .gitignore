@@ -24,6 +24,8 @@ web/.vite/
 # web/dist/ 已由顶部 dist/ 规则覆盖（构建产物不入库，运行时 npm run build）
 # 运行时生成的用户映射配置（每台机器独立，不入库）
 data/mapping_overrides.json
+# 运行时生成的「上次使用目录」记录（每台机器独立，不入库）
+data/last_dirs.json
 
 # OS
 .DS_Store

@@ -275,10 +275,11 @@ class WordTextReplacerWidget(QWidget):
 
     def _choose_input_folder(self) -> None:
         path = QFileDialog.getExistingDirectory(
-            self, "选择输入文件夹", str(app_config.DATA_DIR))
+            self, "选择输入文件夹", str(app_config.get_last_dir("word_input_folder")))
         if path:
             self._input_folder = Path(path)
             self._edit_input.setText(path)
+            app_config.set_last_dir("word_input_folder", path)
             self._log_line(f"已选择输入文件夹：{path}")
             # 若输出文件夹未选，默认建议为 input 同级目录下的 output
             if self._output_folder is None:
@@ -289,10 +290,11 @@ class WordTextReplacerWidget(QWidget):
 
     def _choose_output_folder(self) -> None:
         path = QFileDialog.getExistingDirectory(
-            self, "选择输出文件夹", str(app_config.DATA_DIR))
+            self, "选择输出文件夹", str(app_config.get_last_dir("word_output_folder")))
         if path:
             self._output_folder = Path(path)
             self._edit_output.setText(path)
+            app_config.set_last_dir("word_output_folder", path)
             self._log_line(f"已选择输出文件夹：{path}")
 
     # ====== 日志 ======

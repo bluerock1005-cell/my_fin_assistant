@@ -184,7 +184,7 @@ class BankClassifyWidget(QWidget):
         ic_lay.addWidget(self._txt_input)
 
         # 统一操作按钮：从文件加载 / 从剪贴板粘贴 / 清空 / 生成分类预览（置于标题右侧）
-        btn_load = QPushButton("从文件加载", input_card)
+        btn_load = QPushButton("+ 添加文件", input_card)
         btn_load.setObjectName("primary")
         btn_load.setFixedHeight(34)
         btn_load.setMinimumWidth(120)
@@ -205,7 +205,7 @@ class BankClassifyWidget(QWidget):
         btn_clear.clicked.connect(self._clear)
         head_row.addWidget(btn_clear)
 
-        self._btn_run = QPushButton("导出 Excel", input_card)
+        self._btn_run = QPushButton("导出文件", input_card)
         self._btn_run.setObjectName("primary")
         self._btn_run.setFixedHeight(34)
         self._btn_run.setMinimumWidth(120)
@@ -371,11 +371,12 @@ class BankClassifyWidget(QWidget):
         p, _ = QFileDialog.getOpenFileName(
             self,
             "选择输入文件",
-            str(app_config.DATA_DIR),
+            str(app_config.get_last_dir("bank_classify_input")),
             "Excel/CSV/TXT (*.xlsx *.xlsm *.csv *.txt);;All files (*)",
         )
         if not p:
             return
+        app_config.set_last_dir("bank_classify_input", p)
         self._load_file_by_path(p)
 
     def _clear(self) -> None:
@@ -394,12 +395,13 @@ class BankClassifyWidget(QWidget):
         # 点击后让用户自己选择导出位置（类似 notes_receivable_import 的导出）
         out_path, _ = QFileDialog.getSaveFileName(
             self, "导出 Excel",
-            str(app_config.DEFAULT_OUTPUT_DIR / "银行承兑汇票分类.xlsx"),
+            str(app_config.get_last_dir("bank_classify_export") / "银行承兑汇票分类.xlsx"),
             "Excel 文件 (*.xlsx)",
         )
         if not out_path:
             self._log_line("ℹ 已取消导出。")
             return
+        app_config.set_last_dir("bank_classify_export", Path(out_path).parent)
         self._out_path = Path(out_path)
 
         self._btn_run.setEnabled(False)

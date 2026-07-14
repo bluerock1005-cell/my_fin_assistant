@@ -279,7 +279,7 @@ class InventoryTableCleanerWidget(QWidget):
         self._lbl_row_count.setObjectName("pageDesc")
         p_head.addWidget(self._lbl_row_count)
         p_head.addStretch(1)
-        self._btn_export = QPushButton("导出 Excel", card2)
+        self._btn_export = QPushButton("导出文件", card2)
         self._btn_export.setObjectName("primary")
         self._btn_export.setFixedHeight(34)
         self._btn_export.setMinimumWidth(120)
@@ -521,9 +521,9 @@ class InventoryTableCleanerWidget(QWidget):
             return
         src = self._input_file
         default_name = f"{src.stem}_清洗.xlsx" if src else "存货表清洗.xlsx"
-        default_dir = str(src.parent) if src else str(Path.home())
+        default_dir = app_config.get_last_dir("inventory_output")
         out_path, _ = QFileDialog.getSaveFileName(
-            self, "导出清洗结果", str(Path(default_dir) / default_name),
+            self, "导出清洗结果", str(default_dir / default_name),
             "Excel 文件 (*.xlsx)")
         if not out_path:
             return
@@ -536,10 +536,7 @@ class InventoryTableCleanerWidget(QWidget):
             utils.error("导出失败", f"保存 Excel 时出错：{e}", parent=self)
             return
         self._output_file = Path(out_path)
-        try:
-            app_config.set_last_dir("inventory_output", out_path)
-        except Exception:
-            pass
+        app_config.set_last_dir("inventory_output", Path(out_path).parent)
         self._btn_open.setEnabled(True)
         self._log_line(f"✅ 已导出 → {out_path}")
         utils.info("导出完成", f"已保存：{out_path}", parent=self)

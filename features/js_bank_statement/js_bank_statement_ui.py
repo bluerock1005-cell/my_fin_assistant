@@ -79,7 +79,7 @@ class JsBankStmtWidget(QWidget):
 
         head = QHBoxLayout()
         head.addStretch(1)
-        btn_load = QPushButton("加载 Excel", self)
+        btn_load = QPushButton("+ 添加文件", self)
         btn_load.setFixedHeight(32)
         btn_load.clicked.connect(self._load_file)
         head.addWidget(btn_load)
@@ -106,7 +106,7 @@ class JsBankStmtWidget(QWidget):
         p, _ = QFileDialog.getOpenFileName(
             self,
             "选择江苏银行对账单（Excel）",
-            str(app_config.DATA_DIR),
+            str(app_config.get_last_dir("js_bank_statement")),
             "Excel 文件 (*.xlsx *.xlsm);;All files (*)",
         )
         if not p:
@@ -117,6 +117,7 @@ class JsBankStmtWidget(QWidget):
             utils.error("加载失败", f"读取文件失败：{e}", parent=self)
             return
         self._path = Path(p)
+        app_config.set_last_dir("js_bank_statement", p)
         self._populate_table(headers, rows)
         utils.info("加载完成", f"已加载: {self._path}\n共 {len(rows)} 行", parent=self)
 

@@ -638,7 +638,7 @@ class NotesReceivableImportWidget(QWidget):
         self._btn_import.clicked.connect(self._do_import)
         h_top.addWidget(self._btn_import)
 
-        self._btn_export = QPushButton("导出 Excel", card1)
+        self._btn_export = QPushButton("导出文件", card1)
         self._btn_export.setObjectName("primary")
         self._btn_export.setFixedHeight(34)
         self._btn_export.setMinimumWidth(120)
@@ -859,7 +859,7 @@ class NotesReceivableImportWidget(QWidget):
     def _add_files(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
             self, "选择来源 Excel 文件",
-            str(app_config.DATA_DIR),
+            str(app_config.get_last_dir("notes_source")),
             "Excel 文件 (*.xlsx *.xlsm *.xls);;所有文件 (*)",
         )
         for p in paths:
@@ -867,16 +867,18 @@ class NotesReceivableImportWidget(QWidget):
             if pp not in self._files:
                 self._files.append(pp)
         if paths:
+            app_config.set_last_dir("notes_source", paths[0])
             self._update_file_label()
             self._log_line(f"已添加 {len(paths)} 个文件（当前共 {len(self._files)} 个）。")
 
     def _switch_template(self) -> None:
         p, _ = QFileDialog.getOpenFileName(
             self, "选择模板文件",
-            str(app_config.DATA_DIR),
+            str(app_config.get_last_dir("notes_template")),
             "Excel 模板 (*.xlsx *.xlsm);;所有文件 (*)",
         )
         if p:
+            app_config.set_last_dir("notes_template", p)
             self._template_path = Path(p)
             self._lbl_template.setText(Path(p).name)
             self._lbl_template.setToolTip(p)
@@ -1255,11 +1257,13 @@ class NotesReceivableImportWidget(QWidget):
 
         out_path, _ = QFileDialog.getSaveFileName(
             self, "保存导入结果",
-            str(app_config.DEFAULT_OUTPUT_DIR / f"应收票据导入_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"),
+            str(app_config.get_last_dir("notes_export")
+                / f"应收票据导入_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"),
             "Excel 文件 (*.xlsx)",
         )
         if not out_path:
             return
+        app_config.set_last_dir("notes_export", Path(out_path).parent)
 
         self._btn_export.setEnabled(False)
         self._progress.setText("正在导出…")

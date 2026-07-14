@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -92,3 +93,58 @@ def _copy_bundled_assets() -> None:
             except OSError:
                 # 复制失败不阻断启动（仅功能缺失，后续会报错提示）
                 pass
+
+
+# ====== 选文件夹操作的『上次使用目录』持久化 ======
+# 规则：初次使用默认用户「下载」文件夹；之后默认上次使用的文件夹。
+# 按 key 分别记忆（如 word 输入/输出各自独立），存于 data/last_dirs.json。
+
+_LAST_DIRS_FILE: Path = DATA_DIR / "last_dirs.json"
+
+
+def downloads_dir() -> Path:
+    """用户『下载』文件夹（Windows 标准位置：~\\Downloads）。
+
+    注：绝大多数 Windows 用户下载目录即此路径；若被重定向到其他盘，
+    可在对应功能首次 선택后由 set_last_dir 记忆，不影响使用。
+    """
+    return Path.home() / "Downloads"
+
+
+def _load_last_dirs() -> dict[str, str]:
+    try:
+        if _LAST_DIRS_FILE.is_file():
+            return json.loads(_LAST_DIRS_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {}
+
+
+def get_last_dir(key: str) -> Path:
+    """返回某选文件夹/选文件操作的『上次使用目录』。
+
+    - 有记录且其本身是目录 → 返回它；
+    - 有记录但它是文件（选文件/导出时存的是完整路径）→ 返回其所在目录；
+    - 否则 → 返回用户下载文件夹（首次使用默认）。
+    """
+    d = _load_last_dirs().get(key)
+    if d:
+        p = Path(d)
+        if p.is_dir():
+            return p
+        if p.parent.is_dir():
+            return p.parent
+    return downloads_dir()
+
+
+def set_last_dir(key: str, path) -> None:
+    """记录某选文件夹操作的『上次使用文件夹』，持久化到 data/last_dirs.json。"""
+    data = _load_last_dirs()
+    data[key] = str(Path(path))
+    try:
+        _LAST_DIRS_FILE.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except OSError:
+        # 持久化失败不阻断主流程（仅下次启动不记忆）
+        pass
